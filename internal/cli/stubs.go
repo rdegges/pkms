@@ -20,11 +20,8 @@ func notImplemented(name string) *cobra.Command {
 	}
 }
 
-func newInitCmd() *cobra.Command     { return notImplemented("init") }
-func newDoctorCmd() *cobra.Command   { return notImplemented("doctor") }
 func newSnapshotCmd() *cobra.Command { return notImplemented("snapshot") }
 func newUndoCmd() *cobra.Command     { return notImplemented("undo") }
 func newHistoryCmd() *cobra.Command  { return notImplemented("history") }
 func newLintCmd() *cobra.Command     { return notImplemented("lint") }
 func newQueryCmd() *cobra.Command    { return notImplemented("query") }
-func newProfileCmd() *cobra.Command  { return notImplemented("profile") }

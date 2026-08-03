@@ -32,7 +32,7 @@ type Link struct {
 	Alias         string // display text for [[t|alias]]; "" when none
 	Embed         bool
 	Kind          LinkKind
-	Line          int  // 1-based; 0 = unknown
+	Line          int // 1-based; 0 = unknown
 	InFrontmatter bool
 }
 
