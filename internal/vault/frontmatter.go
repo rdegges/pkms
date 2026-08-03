@@ -45,6 +45,10 @@ var (
 	fenceClose = []byte("...")
 )
 
+// MaxFrontmatterSize rejects absurd frontmatter blocks before YAML parsing
+// (parser resource limit — SPEC §14).
+const MaxFrontmatterSize = 64 << 10
+
 // splitFrontmatter splits src into (frontmatter, body, bodyOffset).
 // fm is nil when the file has no frontmatter block at byte 0.
 func splitFrontmatter(src []byte) (fm *Frontmatter, body []byte, bodyOffset int) {
@@ -77,6 +81,10 @@ func parseFrontmatterInner(inner []byte) *Frontmatter {
 		Inner:      inner,
 		Lines:      map[string]int{},
 		RawScalars: map[string]string{},
+	}
+	if len(inner) > MaxFrontmatterSize {
+		f.ParseErr = fmt.Errorf("frontmatter exceeds %d bytes; not parsed", MaxFrontmatterSize)
+		return f
 	}
 	var ms yaml.MapSlice
 	if err := yaml.UnmarshalWithOptions(inner, &ms, yaml.UseOrderedMap()); err != nil {

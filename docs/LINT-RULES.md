@@ -563,6 +563,16 @@ instantiate). Findings carry the engine rule ID; semantics are unchanged:
 - `meeting-date-matches-path` also covers the daily-brief date==path check.
 - All other catalog rules keep their IDs 1:1.
 
+**Fixes shipped report-only in v1** (catalog said fixable; deferred on the
+safe side — checks are unchanged): schema-derivable required keys
+(`type: project`, `category`, `type: daily-brief`, `type: recipe` — the
+schema rule reports, no auto-insert), `no-broken-embed` single-repair,
+`related-projects-resolve` single-repair, and `person-meta-last-updated`
+date normalization. The session-trace frontmatter fix (via
+`frontmatter-present`) and all other listed fixes ARE implemented.
+`frontmatter-key-order` requires explicit `enabled = true` + per-type
+`orders` config; its fix moves whole key line-spans verbatim.
+
 ## Deferred to the agent layer (judgment — never lint rules)
 
 1. PARA bucket correctness (Projects vs Areas vs Resources; domain call).

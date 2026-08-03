@@ -162,17 +162,16 @@ func writableDir(dir string) error {
 	return os.Remove(f.Name())
 }
 
+// countFiles counts files recursively (quarantine nests per source:
+// failed/<vault>/<source>/<file> — SPEC §2).
 func countFiles(dir string) int {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return 0
-	}
 	n := 0
-	for _, e := range entries {
-		if !e.IsDir() {
+	_ = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
 			n++
 		}
-	}
+		return nil
+	})
 	return n
 }
 

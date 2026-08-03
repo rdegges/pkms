@@ -68,6 +68,10 @@ func runInit(cmd *cobra.Command, path, name, profileName string, adopt, dryRun b
 	}
 
 	if name == "" {
+		// SPEC §11: the vault name comes from --vault (--name is an alias).
+		name, _ = cmd.Root().PersistentFlags().GetString("vault")
+	}
+	if name == "" {
 		if registered != nil {
 			name = registered.Name
 		} else {

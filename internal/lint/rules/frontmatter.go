@@ -105,29 +105,40 @@ func (fmClosed) CheckNote(ctx *lint.Context, n *vault.Note) []lint.Finding {
 		"frontmatter block has no closing --- fence")}
 }
 
-// Fix inserts the closing fence after the longest prefix of lines that
-// still parses as a YAML mapping (bounded to the first 100 lines).
+// yamlishLine: lines that structurally belong to a YAML mapping block —
+// a top-level key, a list item, or an indented continuation.
+var yamlishLine = regexp.MustCompile(`^([A-Za-z0-9_-]+:|\s*- |\s+\S)`)
+
+// Fix inserts the closing fence before the first line that does not look
+// like YAML mapping content. Blank lines, markdown headings and prose end
+// the block even though YAML would tolerate them (as comments/scalars) —
+// the longest-parseable-prefix approach swallowed body content into the
+// frontmatter, which is a semantic guess, not an unambiguous repair.
+// Report-only unless the resulting prefix parses as a non-empty mapping.
 func (fmClosed) Fix(ctx *lint.Context, n *vault.Note, f lint.Finding) (*lint.FixResult, error) {
 	if n.FM == nil || !n.FM.Unclosed {
 		return nil, nil
 	}
 	lines := srcLines(n.Src) // line 1 is the opening fence
-	limit := len(lines)
-	if limit > 100 {
-		return nil, nil // unbounded scan → report-only
-	}
-	best := 0
-	for k := 1; k < limit; k++ {
-		prefix := joinLines(lines[1 : k+1])
-		var m map[string]any
-		if err := yaml.Unmarshal(prefix, &m); err == nil && m != nil {
-			best = k
-		}
-	}
-	if best == 0 {
+	if len(lines) > 200 {
 		return nil, nil
 	}
-	newSrc, ok := insertLineAfter(n.Src, best+1, []byte("---"))
+	end := 0 // last line index (0-based) that is yamlish
+	for k := 1; k < len(lines); k++ {
+		line := bytes.TrimSuffix(lines[k], []byte("\n"))
+		if len(bytes.TrimSpace(line)) == 0 || !yamlishLine.Match(line) {
+			break
+		}
+		end = k
+	}
+	if end == 0 {
+		return nil, nil
+	}
+	var m map[string]any
+	if err := yaml.Unmarshal(joinLines(lines[1:end+1]), &m); err != nil || len(m) == 0 {
+		return nil, nil
+	}
+	newSrc, ok := insertLineAfter(n.Src, end+1, []byte("---"))
 	if !ok {
 		return nil, nil
 	}

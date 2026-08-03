@@ -6,13 +6,17 @@ DOCKER_RUN := docker run --rm \
 	-v pkms-gobuild:/root/.cache/go-build \
 	$(GO_IMAGE)
 
-.PHONY: test vet build build-host tidy fmt
+.PHONY: test vet lint build build-host tidy fmt
 
 test:
 	$(DOCKER_RUN) go test ./...
 
 vet:
 	$(DOCKER_RUN) go vet ./...
+
+# vet + formatting gate; CI adds golangci-lint (pinned in the workflow).
+lint: vet
+	$(DOCKER_RUN) sh -c 'test -z "$$(gofmt -l ./cmd ./internal)" || (gofmt -l ./cmd ./internal && exit 1)'
 
 # Linux binary (native to the container).
 build:

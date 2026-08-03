@@ -494,6 +494,39 @@ s
 `
 }
 
+// TestUnclosedFenceFixNeverSwallowsBody: the closing fence goes before the
+// first non-YAML-shaped line (blank line / heading / prose), never after it
+// — the longest-parseable-prefix approach ate body content (markdown
+// headings are valid YAML comments). Regression from red-team review.
+func TestUnclosedFenceFixNeverSwallowsBody(t *testing.T) {
+	files := map[string]string{
+		"People/Snyk/Unclosed.md": "---\nlast_met: 2026-01-01\nmeeting_count: 2\n# Jane Doe\n\nSome relationship text.\n",
+	}
+	ix, prof, _ := buildVault(t, files)
+	fs, err := lint.Run(ix, prof, nil, []string{"frontmatter-closed"})
+	require.NoError(t, err)
+	require.Len(t, fs, 1)
+
+	res, err := lint.Fix(ix, prof, nil, fs[0])
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t,
+		"---\nlast_met: 2026-01-01\nmeeting_count: 2\n---\n# Jane Doe\n\nSome relationship text.\n",
+		string(res.NewSrc), "the H1 and prose stay in the body")
+
+	// All-prose after the fence: nothing unambiguous to close — report-only.
+	files2 := map[string]string{
+		"People/Snyk/AllProse.md": "---\nJust prose, no keys at all\nmore prose\n",
+	}
+	ix2, prof2, _ := buildVault(t, files2)
+	fs2, err := lint.Run(ix2, prof2, nil, []string{"frontmatter-closed"})
+	require.NoError(t, err)
+	require.Len(t, fs2, 1)
+	res2, err := lint.Fix(ix2, prof2, nil, fs2[0])
+	require.NoError(t, err)
+	require.Nil(t, res2, "no unambiguous repair exists")
+}
+
 // TestBracketedTargetNeverFixable: a real filename containing wikilink
 // syntax chars ([C]) must never produce a single-repair fix — the repair
 // cannot round-trip through [[...]] parsing and corrupts the link
@@ -512,6 +545,38 @@ func TestBracketedTargetNeverFixable(t *testing.T) {
 		require.NoError(t, ferr)
 		require.Nil(t, res)
 	}
+}
+
+// TestKeyOrderRule: off by default; when enabled with explicit orders,
+// checks template order and fixes by moving whole line spans.
+func TestKeyOrderRule(t *testing.T) {
+	files := map[string]string{
+		"People/Snyk/Shuffled.md": "---\ntopics:\n  - ai\nlast_met: 2026-01-01\nmeeting_count: 1\n---\nbody\n",
+	}
+	ix, prof, _ := buildVault(t, files)
+
+	// Disabled (profile default) → no findings.
+	fs, err := lint.Run(ix, prof, nil, []string{"frontmatter-key-order"})
+	require.NoError(t, err)
+	require.Empty(t, fs)
+
+	overrides := map[string]map[string]any{
+		"frontmatter-key-order": {
+			"enabled": true,
+			"orders":  map[string]any{"person": []any{"last_met", "meeting_count", "topics"}},
+		},
+	}
+	fs, err = lint.Run(ix, prof, overrides, []string{"frontmatter-key-order"})
+	require.NoError(t, err)
+	require.Len(t, fs, 1)
+	require.True(t, fs[0].Fixable)
+
+	res, err := lint.Fix(ix, prof, overrides, fs[0])
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t,
+		"---\nlast_met: 2026-01-01\nmeeting_count: 1\ntopics:\n  - ai\n---\nbody\n",
+		string(res.NewSrc), "line spans move verbatim, values untouched")
 }
 
 // TestFixIdempotence: applying every fix converges and a second pass

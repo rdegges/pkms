@@ -20,15 +20,19 @@ Decisions from the freeze question round (2026-08-03):
 - **Config**: `version = 1` (integer) at the top of `config.toml`. Unknown higher
   version → hard error telling the user to upgrade pkms.
 - **Profile**: `schema_version = 1` in `profile.toml`. Same policy.
-- **Note-type schemas**: standard JSON Schema (draft 2020-12); each has an `$id`
-  of the form `pkms:profile/<profile>/<type>/v1`.
+- **Note-type schemas**: standard JSON Schema (draft 2020-12); compiled under
+  the resource URL `pkms://profile/<profile>/<type>/v1`.
 - **State files**: first line is a header record carrying `{"v":1,...}`.
 - Policy: additive changes don't bump versions; breaking changes bump the integer
   and pkms must read all older versions it ever shipped (migrate forward on write).
 
 ## 2. XDG layout
 
-Via `adrg/xdg`. All paths overridable by the standard `XDG_*` env vars.
+Implemented in-tree (`internal/paths`), following the XDG basedir spec
+literally on every Unix platform — `$XDG_*_HOME` when set, else `~/.config`,
+`~/.local/state`, `~/.local/share`. (Amended: `adrg/xdg` was dropped because
+it diverges to `~/Library/Application Support` on macOS, breaking the
+documented config path below.)
 
 | Purpose | Path |
 | --- | --- |
@@ -101,7 +105,10 @@ scaffold = [
 # Root files created by init from templates/root/<file> if present.
 root_files = ["Projects.md"]
 
-[types.<name>]                 # one table per note type
+[[types]]                      # ordered array — order IS classification
+name     = "<name>"            # precedence (first matching type wins;
+scope    = ["<glob>", ...]     # content-triggered types precede fallbacks)
+require_any_key = ["k1", "k2"] # optional content trigger (any key present)
 schema   = "schemas/<name>.schema.json"
 template = "templates/<name>.md"
 folder   = "<Go template>"     # placement: renders to a vault-relative dir
@@ -122,8 +129,10 @@ policy  = "must-link-all"      # v1: the only policy; every match must be wikili
 - **Note-type schemas** validate the frontmatter mapping only (not the body).
   `additionalProperties: true` everywhere — user-added keys are never errors.
   Each schema declares `required` keys and per-key types/enums/formats.
-- The `para` built-in note types and their schemas are derived from the vault
-  convention catalog (§12) — see `profiles/para/` in-repo.
+- Per the freeze-round decision, the generic `para` profile ships **no typed
+  notes** (profile-agnostic rules only); the full note-type catalog derived
+  from the vault conventions (§12) ships in the `rdegges` built-in — see
+  `profiles/` in-repo.
 
 ## 5. Obsidian-compat semantics (normative for lint/query)
 
@@ -343,7 +352,7 @@ pkms query [--vault v] [--type t] [--where key=value]… [--text s]
 
 ## 11. `pkms init` & `pkms doctor`
 
-- `pkms init --path <dir> [--vault name] [--profile para]`:
+- `pkms init --path <dir> [--vault name | --name name] [--profile para]`:
   create/register the vault — scaffold profile folders + root files, write
   `.gitignore`, `git init` + initial commit, append the `[[vaults]]` entry to
   config (creating config on first run). Idempotent: re-running on an existing
@@ -409,7 +418,9 @@ scratchpad `deps-report.md`, folded into implementation).
 | github.com/knadh/koanf/v2 | v2.3.5 | config core |
 | github.com/knadh/koanf/providers/file | v1.2.1 | config file provider |
 | github.com/knadh/koanf/parsers/toml/v2 | v2.2.1 | TOML parser |
-| github.com/adrg/xdg | v0.5.3 | XDG paths |
+| github.com/bmatcuk/doublestar/v4 | v4.10.0 | scope/glob matching |
+| golang.org/x/text | v0.40.0 | Unicode NFC normalization (§5) |
+| github.com/pelletier/go-toml/v2 | v2.3.1 | profile manifest decode (also koanf's TOML backend) |
 | github.com/zalando/go-keyring | v0.2.8 | secrets (phase 2; pinned now) |
 | github.com/spf13/cobra | v1.10.2 | CLI |
 | github.com/stretchr/testify | v1.11.1 | tests only |
@@ -417,6 +428,8 @@ scratchpad `deps-report.md`, folded into implementation).
 
 Decisions (with rationale):
 
+0. **adrg/xdg dropped** (was pinned v0.5.3) — see §2 amendment; XDG paths are
+   ~30 lines in-tree with the exact documented semantics on macOS.
 1. **YAML = goccy/go-yaml.** `gopkg.in/yaml.v3` was archived 2025-04-01. goccy
    provides ordered maps (`UseOrderedMap`), comment round-trip, and an AST
    escape hatch — required by the frontmatter minimal-diff invariant (§6).
@@ -448,8 +461,11 @@ Phase 2 fetch/IMAP guards are specced in the plan; the slice that binds now:
 - All subprocess execution (git, future hooks) uses argv arrays — never a
   shell string. Untrusted strings (filenames, config values) are never
   interpolated into command lines beyond argv positions.
-- `pkms` never follows symlinks out of the vault during walks; symlinked dirs
-  inside the vault are traversed at most once (inode cycle guard).
+- `pkms` never follows symlinks during walks: symlinked files are skipped and
+  symlinked directories are not traversed in v1 (deterministic; documented
+  divergence — Obsidian does index through them). The write path additionally
+  verifies the `EvalSymlinks`-resolved destination stays inside the resolved
+  vault root.
 
 ## 15. Testing & CI contract
 

@@ -103,6 +103,12 @@ func mergeCfg(base, over map[string]any) map[string]any {
 
 // instantiate builds the enabled rule set for a run.
 func instantiate(prof *profile.Profile, overrides map[string]map[string]any, only []string) (map[string]any, map[string]map[string]any, error) {
+	// A typo'd rule id must not masquerade as a clean run.
+	for _, o := range only {
+		if _, ok := registry[o]; !ok {
+			return nil, nil, fmt.Errorf("unknown lint rule %q (see `pkms lint --help` or docs/LINT-RULES.md)", o)
+		}
+	}
 	wanted := func(id string) bool {
 		if len(only) == 0 {
 			return true

@@ -44,6 +44,9 @@ into nested maps). Output order is deterministic (sorted paths).`,
 			})
 			out := cmd.OutOrStdout()
 			if jsonOut {
+				if results == nil {
+					results = []query.Result{} // stable shape: [] not null (SPEC §10)
+				}
 				enc := json.NewEncoder(out)
 				enc.SetIndent("", "  ")
 				return enc.Encode(map[string]any{"results": results})

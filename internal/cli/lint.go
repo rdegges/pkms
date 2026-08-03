@@ -105,7 +105,10 @@ func runLint(cmd *cobra.Command, jsonOut, fix bool, rulesFlag, failOn string) er
 	}
 
 	if jsonOut {
-		summary := map[string]int{}
+		if findings == nil {
+			findings = []lint.Finding{} // stable shape: [] not null (SPEC §8)
+		}
+		summary := map[string]int{"error": 0, "warning": 0}
 		for _, f := range findings {
 			summary[string(f.Severity)]++
 		}
