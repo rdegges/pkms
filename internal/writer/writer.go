@@ -150,9 +150,30 @@ func quarantine(dir, noteType string, fields map[string]any, body string, verr e
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = f.Close() }()
+	// The quarantine file may be the ONLY copy of the rejected record once
+	// the pipeline acks the key — it must be durable before we return.
 	if _, err := f.Write(raw); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	if err := syncQuarantineDir(dir); err != nil {
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+func syncQuarantineDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = d.Close() }()
+	return d.Sync()
 }

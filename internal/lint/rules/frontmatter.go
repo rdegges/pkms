@@ -89,7 +89,8 @@ func (r fmPresent) Fix(ctx *lint.Context, n *vault.Note, f lint.Finding) (*lint.
 	if m == nil || n.FM != nil {
 		return nil, nil
 	}
-	block := fmt.Sprintf("---\ndate: %s\nslug: %s\ntags:\n  - session-trace\n---\n", m[1], m[2])
+	// Slug is quoted: an unquoted "foo #bar" would YAML-parse as "foo".
+	block := fmt.Sprintf("---\ndate: %s\nslug: %q\ntags:\n  - session-trace\n---\n", m[1], m[2])
 	return &lint.FixResult{NewSrc: append([]byte(block), n.Src...)}, nil
 }
 
@@ -124,11 +125,24 @@ func (fmClosed) Fix(ctx *lint.Context, n *vault.Note, f lint.Finding) (*lint.Fix
 		return nil, nil
 	}
 	end := 0 // last line index (0-based) that is yamlish
+	prevOpensBlock := false
 	for k := 1; k < len(lines); k++ {
 		line := bytes.TrimSuffix(lines[k], []byte("\n"))
 		if len(bytes.TrimSpace(line)) == 0 || !yamlishLine.Match(line) {
 			break
 		}
+		// Indented continuations are only YAML when the previous line
+		// opened a block (key:, list item, or block scalar) — otherwise
+		// an indented BODY line right after the mapping would be absorbed
+		// into the frontmatter (codex finding).
+		indented := line[0] == ' ' || line[0] == '\t'
+		if indented && !prevOpensBlock {
+			break
+		}
+		trimmed := bytes.TrimSpace(line)
+		prevOpensBlock = bytes.HasSuffix(trimmed, []byte(":")) ||
+			bytes.HasSuffix(trimmed, []byte("|")) || bytes.HasSuffix(trimmed, []byte(">")) ||
+			bytes.HasPrefix(trimmed, []byte("- "))
 		end = k
 	}
 	if end == 0 {

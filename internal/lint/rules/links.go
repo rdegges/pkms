@@ -143,12 +143,15 @@ func (wikilinkResolves) Fix(ctx *lint.Context, n *vault.Note, f lint.Finding) (*
 	if !ok {
 		return nil, nil
 	}
-	old := []byte("[[" + oldTarget)
-	if !strings.Contains(string(line), string(old)) {
+	// Match the FULL target — `[[Foo` alone would also rewrite a valid
+	// `[[Foobar]]` earlier on the same line (codex finding). The target
+	// must be terminated by ]], |, or #.
+	linkRe := regexp.MustCompile(`\[\[` + regexp.QuoteMeta(oldTarget) + `([\]|#])`)
+	newLine := linkRe.ReplaceAll(line, []byte("[["+repl+"$1"))
+	if string(newLine) == string(line) {
 		return nil, nil
 	}
-	newLine := strings.Replace(string(line), string(old), "[["+repl, 1)
-	newSrc, ok := replaceLine(n.Src, f.Line, []byte(newLine))
+	newSrc, ok := replaceLine(n.Src, f.Line, newLine)
 	if !ok {
 		return nil, nil
 	}

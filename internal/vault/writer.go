@@ -7,6 +7,18 @@ import (
 	"strings"
 )
 
+// syncDir flushes a directory so a rename/link is durable: without it, a
+// crash can lose the directory entry AFTER a caller has durably recorded
+// (acked) the write (codex adversarial finding).
+func syncDir(dir string) error {
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = d.Close() }()
+	return d.Sync()
+}
+
 // WriteAtomic replaces path with data via temp file + rename (SPEC §6).
 // Used by fixes on existing notes; overwrites are intentional here.
 func WriteAtomic(path string, data []byte) error {
@@ -28,7 +40,10 @@ func WriteAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	return syncDir(dir)
 }
 
 // CreateNewNote atomically creates dir/base.md, never overwriting: on
@@ -65,6 +80,11 @@ func CreateNewNote(dir, base string, data []byte) (string, error) {
 		target := filepath.Join(dir, name)
 		err := os.Link(tmpName, target)
 		if err == nil {
+			// Make the directory entry durable BEFORE the caller acks
+			// the record into ingest state.
+			if err := syncDir(dir); err != nil {
+				return "", err
+			}
 			return target, nil
 		}
 		if !os.IsExist(err) {

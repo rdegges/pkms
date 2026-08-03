@@ -78,6 +78,41 @@ func TestCompaction(t *testing.T) {
 	require.Equal(t, float64(compactThreshold+9), s2.Cursor()["pos"])
 }
 
+// A torn final line (crash during append) must not wedge the store: the
+// incomplete tail is discarded — its ack never became durable, so the
+// record re-fetches and dedups (codex finding).
+func TestTornTailRecovers(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.ndjson")
+	s, err := OpenState(p, "imap:work")
+	require.NoError(t, err)
+	require.NoError(t, s.Ack("<ok@example.com>", "n.md", now))
+	require.NoError(t, s.Close())
+
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	_, err = f.WriteString(`{"op":"ack","k":"deadbeef`) // torn mid-write
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	s2, err := OpenState(p, "imap:work")
+	require.NoError(t, err, "torn tail is recoverable, not fatal")
+	defer func() { _ = s2.Close() }()
+	require.True(t, s2.Seen("<ok@example.com>"), "durable acks survive")
+	require.NoError(t, s2.Ack("<next@example.com>", "n2.md", now), "store keeps working")
+}
+
+// The state store holds a per-source lock: a second concurrent open fails
+// rather than double-ingesting (codex finding).
+func TestStateStoreLocked(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.ndjson")
+	s, err := OpenState(p, "imap:work")
+	require.NoError(t, err)
+	defer func() { _ = s.Close() }()
+
+	_, err = OpenState(p, "imap:work")
+	require.Error(t, err, "second concurrent open is refused")
+}
+
 func TestRegistry(t *testing.T) {
 	Register("test-src", func(cfg map[string]any) (Ingester, error) { return nil, nil })
 	f, err := Lookup("test-src")

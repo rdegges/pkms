@@ -113,6 +113,16 @@ func (o *Op) Record(relPath string) error {
 	return o.save()
 }
 
+// Discard removes the journal of an op that made no changes — an empty op
+// would become a useless `undo last` target.
+func (o *Op) Discard() error {
+	err := os.Remove(o.path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
 // End commits the op's changes with the op trailer.
 func (o *Op) End(summary string) error {
 	clean, err := o.g.IsClean()

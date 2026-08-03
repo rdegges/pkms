@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/text/cases"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -46,10 +47,13 @@ type WalkOptions struct {
 	AttachmentsDir string
 }
 
+var foldCaser = cases.Fold()
+
 // key normalizes a path/name for Obsidian-compatible matching:
-// Unicode NFC + case folding (SPEC §5.3d).
+// Unicode NFC + case folding (SPEC §5.3d). Real folding, not ToLower:
+// e.g. Greek final sigma ς and Σ must land on the same key.
 func key(s string) string {
-	return strings.ToLower(norm.NFC.String(s))
+	return foldCaser.String(norm.NFC.String(s))
 }
 
 // BuildIndex walks root and parses every note.
@@ -98,11 +102,18 @@ func BuildIndex(root string, opts WalkOptions) (*Index, error) {
 		inAttachments := opts.AttachmentsDir != "" &&
 			(rel == opts.AttachmentsDir || strings.HasPrefix(rel, opts.AttachmentsDir+"/"))
 		if strings.HasSuffix(rel, ".md") && !strings.HasPrefix(base, ".") && !inAttachments {
-			src, err := os.ReadFile(p)
-			if err != nil {
-				return fmt.Errorf("read %s: %w", rel, err)
+			var n *Note
+			if info, ierr := d.Info(); ierr == nil && info.Size() > MaxBodyParseSize {
+				// Don't even allocate the bytes: a multi-GiB note would
+				// OOM before the parse-size cap could apply (SPEC §14).
+				n = &Note{RelPath: rel, TooLarge: true, BlockIDs: map[string]bool{}}
+			} else {
+				src, err := os.ReadFile(p)
+				if err != nil {
+					return fmt.Errorf("read %s: %w", rel, err)
+				}
+				n = ParseNote(rel, src)
 			}
-			n := ParseNote(rel, src)
 			ix.Notes[rel] = n
 			nb := strings.TrimSuffix(base, ".md")
 			ix.noteBase[key(nb)] = append(ix.noteBase[key(nb)], rel)
@@ -115,7 +126,12 @@ func BuildIndex(root string, opts WalkOptions) (*Index, error) {
 
 	for _, n := range ix.Notes {
 		for _, a := range n.Aliases() {
-			ix.aliasTo[key(a)] = append(ix.aliasTo[key(a)], n.RelPath)
+			k := key(a)
+			// Dedupe: `aliases: [Foo, Foo]` must not fake ambiguity.
+			if len(ix.aliasTo[k]) > 0 && ix.aliasTo[k][len(ix.aliasTo[k])-1] == n.RelPath {
+				continue
+			}
+			ix.aliasTo[k] = append(ix.aliasTo[k], n.RelPath)
 		}
 	}
 	for _, rel := range ix.sortedNotePaths() {

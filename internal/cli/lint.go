@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -177,12 +178,19 @@ func applyFixes(cmd *cobra.Command, v *config.Vault, prof *profile.Profile, only
 		if err != nil {
 			return err
 		}
-		current := findings
 		// A fix that "applies" without resolving its finding would reapply
-		// forever; each (path, rule, message) is attempted at most once.
+		// forever; each (path, rule, line, message) is attempted at most once.
 		attempted := map[string]bool{}
+		var current []lint.Finding
 		for iter := 0; iter < maxFixIterations; iter++ {
 			ix, err := vault.BuildIndex(v.Path, vault.WalkOptions{AttachmentsDir: prof.Attachments})
+			if err != nil {
+				return err
+			}
+			// Findings are recomputed from THIS index snapshot — the
+			// pre-lock findings may carry stale line numbers, and a fix
+			// applied at a stale line can hit unrelated content (codex).
+			current, err = lint.Run(ix, prof, v.Lint, only)
 			if err != nil {
 				return err
 			}
@@ -190,6 +198,11 @@ func applyFixes(cmd *cobra.Command, v *config.Vault, prof *profile.Profile, only
 			for _, f := range current {
 				key := fmt.Sprintf("%s\x00%s\x00%d\x00%s", f.Path, f.Rule, f.Line, f.Message)
 				if !f.Fixable || touched[f.Path] || attempted[key] {
+					continue
+				}
+				// CRLF files: line-edit fixes would produce mixed line
+				// endings; report-only (documented limitation).
+				if note := ix.Notes[f.Path]; note != nil && bytes.Contains(note.Src, []byte("\r\n")) {
 					continue
 				}
 				res, err := lint.Fix(ix, prof, v.Lint, f)
@@ -242,6 +255,9 @@ func applyFixes(cmd *cobra.Command, v *config.Vault, prof *profile.Profile, only
 			}
 		}
 		out = current
+		if applied == 0 {
+			return op.Discard() // no writes: no op to undo, no commit
+		}
 		return op.End(fmt.Sprintf("%d fix(es)", applied))
 	}()
 	if err != nil {

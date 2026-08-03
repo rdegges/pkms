@@ -200,7 +200,7 @@ func TestSessionTraceFrontmatterFix(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Contains(t, string(res.NewSrc), "date: 2026-07-10")
-	require.Contains(t, string(res.NewSrc), "slug: my-trace")
+	require.Contains(t, string(res.NewSrc), `slug: "my-trace"`, "slug is quoted (YAML-special chars)")
 
 	// Idempotence: after applying, the finding is gone and Fix is a no-op.
 	p := filepath.Join(root, "Resources/Personal/Session Traces/2026-07-10 — my-trace.md")
@@ -525,6 +525,60 @@ func TestUnclosedFenceFixNeverSwallowsBody(t *testing.T) {
 	res2, err := lint.Fix(ix2, prof2, nil, fs2[0])
 	require.NoError(t, err)
 	require.Nil(t, res2, "no unambiguous repair exists")
+}
+
+// TestWikilinkFixNeverRewritesAdjacentValidLink: repairing [[Foo]] must not
+// touch a valid [[Foobar]] earlier on the same line (codex finding: the
+// old prefix match `[[Foo` hit both).
+func TestWikilinkFixNeverRewritesAdjacentValidLink(t *testing.T) {
+	files := map[string]string{
+		"Foobar.md": "# Foobar\n",
+		"Fooo.md":   "# Fooo\n",
+		"Source.md": "See [[Foobar]] and broken [[Foo]] here.\n",
+	}
+	ix, prof, _ := buildVault(t, files)
+	fs, err := lint.Run(ix, prof, nil, []string{"wikilink-resolves"})
+	require.NoError(t, err)
+	require.Len(t, fs, 1)
+	require.Contains(t, fs[0].Message, "[[Foo]]")
+	require.True(t, fs[0].Fixable, "unique distance-1 candidate Fooo")
+
+	res, err := lint.Fix(ix, prof, nil, fs[0])
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Contains(t, string(res.NewSrc), "[[Foobar]]", "valid link untouched")
+	require.Contains(t, string(res.NewSrc), "[[Fooo]]", "broken link repaired")
+}
+
+// TestAttendeeHashNeverWrapped: "Jane#CEO" must not become a
+// fragment-bearing [[Jane#CEO]] link (codex finding), and fragment/embed
+// attendee entries are rejected by the checker.
+func TestAttendeeHashNeverWrapped(t *testing.T) {
+	files := cleanVault()
+	files["Meetings/Snyk/2026/05/07/1000 - Odd.md"] = `---
+date: 2026-05-07
+time: "10:00 - 11:00"
+duration: 60
+type: meeting
+has_transcript: false
+attendees:
+  - Jane#CEO
+  - "[[Jane Doe#CEO]]"
+  - "![[Jane Doe]]"
+tags: [meeting, snyk]
+---
+x
+`
+	ix, prof, _ := buildVault(t, files)
+	fs, err := lint.Run(ix, prof, nil, []string{"meeting-attendees-are-wikilinks"})
+	require.NoError(t, err)
+	require.Len(t, fs, 3)
+	for _, f := range fs {
+		require.False(t, f.Fixable, "%s", f.Message)
+		res, ferr := lint.Fix(ix, prof, nil, f)
+		require.NoError(t, ferr)
+		require.Nil(t, res)
+	}
 }
 
 // TestBracketedTargetNeverFixable: a real filename containing wikilink

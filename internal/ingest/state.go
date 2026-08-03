@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/rdegges/pkms/internal/lock"
 )
 
 // StateStore is the per-source dedup/ack ledger (SPEC §7): an append-only
@@ -21,9 +24,13 @@ type StateStore struct {
 	source string
 
 	f      *os.File
+	lock   *lock.Lock
 	seen   map[string]bool // sha256(NaturalKey) hex -> acked or quarantined
 	cursor Cursor
 	lines  int
+	// tornTail is true when the log ended in a partial line (crash during
+	// append); the next append rewrites cleanly via compaction.
+	tornTail bool
 }
 
 type stateLine struct {
@@ -50,28 +57,39 @@ func Key(naturalKey string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// OpenState opens (creating if needed) the state file for one source.
+// OpenState opens (creating if needed) the state file for one source and
+// takes an exclusive per-source flock: two concurrent ingest runs would
+// each see Seen()==false and both write the note (SPEC §7 locks).
 func OpenState(path, source string) (*StateStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
-	s := &StateStore{path: path, source: source, seen: map[string]bool{}}
-	if err := s.load(); err != nil {
+	l, err := lock.Acquire(path + ".lock")
+	if err != nil {
 		return nil, err
 	}
-	if s.lines > compactThreshold {
+	s := &StateStore{path: path, source: source, seen: map[string]bool{}, lock: l}
+	if err := s.load(); err != nil {
+		_ = l.Release()
+		return nil, err
+	}
+	if s.lines > compactThreshold || s.tornTail {
 		if err := s.compact(); err != nil {
+			_ = l.Release()
 			return nil, err
 		}
+		s.tornTail = false
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
+		_ = l.Release()
 		return nil, err
 	}
 	s.f = f
 	if s.lines == 0 {
 		if err := s.append(stateLine{V: 1, Source: source}); err != nil {
 			_ = f.Close()
+			_ = l.Release()
 			return nil, err
 		}
 	}
@@ -79,22 +97,37 @@ func OpenState(path, source string) (*StateStore, error) {
 }
 
 func (s *StateStore) load() error {
-	f, err := os.Open(s.path)
+	raw, err := os.ReadFile(s.path)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	defer func() { _ = f.Close() }()
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(bytes.NewReader(raw))
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+	var pending []stateLine
+	lineNo := 0
 	for sc.Scan() {
-		s.lines++
+		lineNo++
 		var l stateLine
 		if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
-			return fmt.Errorf("%s line %d: %w", s.path, s.lines, err)
+			// A torn LAST line is a crash-during-append, not corruption:
+			// discard it (its ack never became durable, so the record
+			// will be re-fetched and deduped). Mid-file damage is fatal.
+			if !sc.Scan() {
+				s.tornTail = true
+				break
+			}
+			return fmt.Errorf("%s line %d: %w", s.path, lineNo, err)
 		}
+		pending = append(pending, l)
+	}
+	if err := sc.Err(); err != nil {
+		return err
+	}
+	for _, l := range pending {
+		s.lines++
 		switch l.Op {
 		case "ack", "quarantine":
 			s.seen[l.K] = true
@@ -102,7 +135,7 @@ func (s *StateStore) load() error {
 			s.cursor = l.Data
 		}
 	}
-	return sc.Err()
+	return nil
 }
 
 // Seen reports whether a natural key was already acked or quarantined.
@@ -199,5 +232,13 @@ func (s *StateStore) compact() error {
 	return nil
 }
 
-// Close releases the file handle.
-func (s *StateStore) Close() error { return s.f.Close() }
+// Close releases the file handle and the per-source lock.
+func (s *StateStore) Close() error {
+	err := s.f.Close()
+	if s.lock != nil {
+		if lerr := s.lock.Release(); err == nil {
+			err = lerr
+		}
+	}
+	return err
+}

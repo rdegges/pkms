@@ -182,12 +182,15 @@ func (attendeesWikilinks) CheckNote(ctx *lint.Context, n *vault.Note) []lint.Fin
 	}
 	var out []lint.Finding
 	for _, a := range attendees {
-		target, _, alias, _, isLink := vault.ParseWikilinkString(a)
+		target, fragment, alias, embed, isLink := vault.ParseWikilinkString(a)
 		switch {
 		case !isLink:
-			out = append(out, finding(lint.Error, n.RelPath, n.FM.Lines["attendees"], true,
+			// Wrapping is only safe when the bare name can round-trip
+			// through [[...]] syntax unchanged.
+			fixable := !strings.ContainsAny(a, "[]|#")
+			out = append(out, finding(lint.Error, n.RelPath, n.FM.Lines["attendees"], fixable,
 				"attendee %q is not a [[wikilink]]", a))
-		case alias != "" || target == "":
+		case alias != "" || fragment != "" || embed || target == "":
 			out = append(out, finding(lint.Error, n.RelPath, n.FM.Lines["attendees"], false,
 				"attendee %q must be a plain [[Full Name]] link", a))
 		}
@@ -199,7 +202,9 @@ var attendeeMsgRe = regexp.MustCompile(`^attendee "(.+)" is not a \[\[wikilink\]
 
 func (attendeesWikilinks) Fix(ctx *lint.Context, n *vault.Note, f lint.Finding) (*lint.FixResult, error) {
 	m := attendeeMsgRe.FindStringSubmatch(f.Message)
-	if m == nil || strings.Contains(m[1], "[") {
+	// Names containing wikilink syntax chars can't round-trip: "Jane#CEO"
+	// would become a [[Jane]]-with-fragment link (codex finding).
+	if m == nil || strings.ContainsAny(m[1], "[]|#") {
 		return nil, nil
 	}
 	bare := m[1]
@@ -299,7 +304,10 @@ func (tagsDomain) Fix(ctx *lint.Context, n *vault.Note, f lint.Finding) (*lint.F
 	if m == nil || !hasParsedFM(n) {
 		return nil, nil
 	}
-	domain := m[1]
+	// Always quote the inserted tag: an unquoted value containing YAML
+	// specials (e.g. "foo #bar") would silently parse to something else
+	// and the fix would never converge (codex finding).
+	domain := fmt.Sprintf("%q", m[1])
 	line, ok := getLine(n.Src, n.FM.Lines["tags"])
 	if !ok {
 		return nil, nil

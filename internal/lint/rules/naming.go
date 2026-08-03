@@ -500,8 +500,10 @@ func (templatePlaceholders) Fix(ctx *lint.Context, n *vault.Note, f lint.Finding
 	if m == nil {
 		return nil, nil
 	}
-	src := regexp.MustCompile(`\{\{\s*date\s*\}\}`).ReplaceAll(n.Src, []byte(m[1]))
-	src = regexp.MustCompile(`\{\{\s*slug\s*\}\}`).ReplaceAll(src, []byte(m[2]))
+	// ReplaceAllLiteral: a filename slug containing "$1" must be inserted
+	// verbatim, not expanded as a capture-group reference (codex finding).
+	src := regexp.MustCompile(`\{\{\s*date\s*\}\}`).ReplaceAllLiteral(n.Src, []byte(m[1]))
+	src = regexp.MustCompile(`\{\{\s*slug\s*\}\}`).ReplaceAllLiteral(src, []byte(m[2]))
 	if bytes.Equal(src, n.Src) {
 		return nil, nil
 	}
