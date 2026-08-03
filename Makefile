@@ -6,10 +6,14 @@ DOCKER_RUN := docker run --rm \
 	-v pkms-gobuild:/root/.cache/go-build \
 	$(GO_IMAGE)
 
-.PHONY: test vet lint build build-host tidy fmt
+.PHONY: test e2e vet lint build build-host tidy fmt
 
 test:
 	$(DOCKER_RUN) go test ./...
+
+# New-user-experience walkthrough as executable scripts (e2e/testdata/).
+e2e:
+	$(DOCKER_RUN) go test -tags=e2e ./e2e/...
 
 vet:
 	$(DOCKER_RUN) go vet ./...

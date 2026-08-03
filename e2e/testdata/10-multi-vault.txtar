@@ -1,0 +1,20 @@
+# Phase 10: multi-vault — reads demand an explicit --vault when ambiguous;
+# snapshot fans out over every vault (it's the cron entry point).
+
+exec pkms init --path $WORK/v1
+exec pkms init --path $WORK/v2
+
+! exec pkms lint
+stderr 'multiple vaults configured; pick one with --vault'
+
+exec pkms lint --vault v1
+stdout 'clean: no findings'
+
+cp seed.md $WORK/v1/Projects/seed.md
+cp seed.md $WORK/v2/Projects/seed.md
+exec pkms snapshot
+stdout 'v1: committed 1 file\(s\)'
+stdout 'v2: committed 1 file\(s\)'
+
+-- seed.md --
+same note, two vaults

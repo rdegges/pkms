@@ -1,0 +1,41 @@
+name: brew-smoke
+
+# Verifies the SHIPPED artifact: after each release workflow succeeds,
+# install from the tap on a clean macOS runner and walk the first-contact
+# flow. (Triggered via workflow_run because releases created with
+# GITHUB_TOKEN don't fire `release:` events.)
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: macos-latest
+    steps:
+      - name: install from tap
+        run: |
+          # The cask lands in the tap during the release run; retry briefly
+          # in case of propagation lag.
+          for i in 1 2 3; do
+            brew install rdegges/tap/pkms && break
+            sleep 20
+          done
+      - name: first-contact flow
+        run: |
+          set -euo pipefail
+          pkms version
+          pkms profile list | grep para
+          pkms init --path "$HOME/smoke-vault"
+          pkms doctor
+          pkms lint
+          echo "See [[Broken Link]]." > "$HOME/smoke-vault/Projects/note.md"
+          pkms snapshot | grep committed
+          pkms lint && exit 1 || test $? -eq 1   # findings -> exit 1
+          pkms query --text "broken" | grep note.md
+          pkms history | grep snapshot

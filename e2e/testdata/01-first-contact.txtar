@@ -1,0 +1,32 @@
+# Phase 1: first contact — bare command, version, doctor before any vault,
+# first init. The help and the "next steps" hint are the product here.
+
+exec pkms
+stdout 'Deterministic manager for Obsidian-compatible markdown vaults'
+stdout 'init'
+stdout 'lint'
+stdout 'snapshot'
+
+exec pkms version
+stdout 'pkms '
+stdout 'config schema v1, profile schema v1'
+
+# Doctor before any vault exists: informative, zero failures, exit 0.
+exec pkms doctor
+stdout 'config'
+stdout '0 failures'
+
+exec pkms init --path $WORK/vault
+stdout 'vault "vault" ready'
+stdout 'next: `pkms doctor` to verify, `pkms snapshot` to take a snapshot'
+
+exists $WORK/vault/Projects
+exists $WORK/vault/Areas
+exists $WORK/vault/Resources
+exists $WORK/vault/Archive
+exists $WORK/vault/.git
+grep 'workspace' $WORK/vault/.gitignore
+grep 'DS_Store' $WORK/vault/.gitignore
+
+exec pkms doctor
+stdout '0 failures'

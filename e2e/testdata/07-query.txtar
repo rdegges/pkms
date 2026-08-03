@@ -1,0 +1,47 @@
+# Phase 7: deterministic retrieval — field filters, list contains,
+# case-insensitive text, backlinks, orphans, agent-ready JSON.
+
+exec pkms init --path $WORK/vault
+cp seed/alpha.md $WORK/vault/Projects/alpha.md
+cp seed/Recipes.md $WORK/vault/Resources/Recipes.md
+cp seed/orphan.md $WORK/vault/Resources/orphan.md
+
+exec pkms query --where status=active
+stdout 'Projects/alpha.md'
+! stdout 'orphan.md'
+
+exec pkms query --where tags=go
+stdout 'Projects/alpha.md'
+
+exec pkms query --where status=active --where tags=nope
+! stdout 'alpha.md'
+stderr 'no matches'
+
+exec pkms query --text 'ALPHA PROJECT'
+stdout 'Projects/alpha.md'
+
+exec pkms query --backlinks Resources/Recipes.md
+stdout 'Projects/alpha.md'
+! stdout 'orphan.md'
+
+exec pkms query --orphans
+stdout 'Resources/orphan.md'
+! stdout 'Recipes.md'
+
+exec pkms query --where status=active --json
+stdout '"path": "Projects/alpha.md"'
+stdout '"status": "active"'
+
+! exec pkms query --where badformat
+stderr 'key=value'
+
+-- seed/alpha.md --
+---
+status: active
+tags: [go, cli]
+---
+Alpha project. Links [[Recipes]].
+-- seed/Recipes.md --
+Recipe collection.
+-- seed/orphan.md --
+Nothing links here.

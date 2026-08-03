@@ -1,0 +1,41 @@
+# Phase 6: fix → strict no-op → undo → redo, with a concurrent user edit
+# that must survive the undo untouched. The core safety story.
+
+exec pkms init --path $WORK/vault
+cp seed/ideas.md $WORK/vault/Projects/ideas.md
+cp seed/Recipes.md $WORK/vault/Resources/Recipes.md
+exec pkms snapshot
+
+# One fixable typo + one unfixable broken link -> fix applies 1, exit 1 remains.
+! exec pkms lint --fix
+stdout 'applied 1 fix\(es\)'
+stdout 'broken link \[\[Nonexistent Note\]\]'
+grep '\[\[Recipes\]\]' $WORK/vault/Projects/ideas.md
+
+# Fix twice = no-op.
+! exec pkms lint --fix
+! stdout 'applied'
+
+# A user edit lands while we're about to undo; undo must not touch it.
+cp seed/user-edit.md $WORK/vault/Areas/user-edit.md
+exec pkms undo last --vault vault
+stdout 'reverted 1 file\(s\)'
+grep '\[\[Recipies\]\]' $WORK/vault/Projects/ideas.md
+exists $WORK/vault/Areas/user-edit.md
+grep 'typed during the op' $WORK/vault/Areas/user-edit.md
+
+# Undo is an op too: undoing it restores the fix.
+exec pkms undo last --vault vault
+grep '\[\[Recipes\]\]' $WORK/vault/Projects/ideas.md
+
+exec pkms history
+stdout 'lint-fix: 1 fix\(es\)'
+stdout 'undo\(lint-fix-'
+stdout 'undo\(undo-'
+
+-- seed/ideas.md --
+See [[Nonexistent Note]] and [[Recipies]].
+-- seed/Recipes.md --
+Recipe collection.
+-- seed/user-edit.md --
+typed during the op

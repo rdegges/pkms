@@ -1,0 +1,18 @@
+# Phase 5: the time machine — snapshot commits, clean runs are no-ops,
+# history reads like a story.
+
+exec pkms init --path $WORK/vault
+cp seed.md $WORK/vault/Projects/seed.md
+
+exec pkms snapshot
+stdout 'vault: committed 1 file\(s\)'
+
+exec pkms snapshot
+stdout 'vault: nothing to snapshot'
+
+exec pkms history
+stdout 'snapshot: 1 file\(s\) @ '
+stdout 'pkms init'
+
+-- seed.md --
+A note worth keeping.

@@ -1,0 +1,16 @@
+# Phase 9: push-only remote snapshots to a per-machine branch.
+
+exec git init --bare $WORK/remote.git
+exec pkms init --path $WORK/vault
+exec sh -c 'printf "\n  [vaults.snapshot]\n  remote = \"%s\"\n" "$WORK/remote.git" >> "$PKMS_CONFIG"'
+
+cp seed.md $WORK/vault/Projects/seed.md
+exec pkms snapshot
+stdout 'vault: committed 1 file\(s\)'
+stdout 'vault: pushed to snapshots/'
+
+exec git -C $WORK/remote.git branch --list
+stdout 'snapshots/'
+
+-- seed.md --
+pushed content

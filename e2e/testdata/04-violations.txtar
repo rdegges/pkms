@@ -1,0 +1,43 @@
+# Phase 4: seed real violations, read the report like a user would —
+# grouped by file, severity letters, F markers on fixable findings.
+
+exec pkms init --path $WORK/vault
+cp seed/ideas.md $WORK/vault/Projects/ideas.md
+cp seed/broken-fm.md $WORK/vault/Resources/broken-fm.md
+cp seed/tabs.md $WORK/vault/Resources/tabs.md
+cp seed/Recipes.md $WORK/vault/Resources/Recipes.md
+cp seed/empty.md $WORK/vault/Areas/empty.md
+cp seed/notes.bak $WORK/vault/Resources/notes.bak
+
+! exec pkms lint
+stdout 'Projects/ideas.md'
+stdout 'broken link \[\[Nonexistent Note\]\]'
+stdout 'eF wikilink-resolves'
+stdout 'eF frontmatter-closed'
+stdout 'eF frontmatter-no-tabs'
+stdout 'w  no-junk-files'
+stdout 'w  empty-note'
+stdout 'error\(s\), '
+stdout 'F = fixable with --fix'
+
+# JSON mirrors the same findings for automation.
+! exec pkms lint --json
+stdout '"rule": "wikilink-resolves"'
+stdout '"fixable": true'
+
+-- seed/ideas.md --
+See [[Nonexistent Note]] and [[Recipies]].
+-- seed/broken-fm.md --
+---
+title: unclosed
+-- seed/tabs.md --
+---
+tags:
+	- tabbed
+---
+body
+-- seed/Recipes.md --
+Recipe collection.
+-- seed/empty.md --
+-- seed/notes.bak --
+junk

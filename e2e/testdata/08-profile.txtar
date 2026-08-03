@@ -1,0 +1,16 @@
+# Phase 8: profiles as data — list, eject, and run a vault on the
+# ejected copy (the customization story).
+
+exec pkms profile list
+stdout 'para'
+stdout 'rdegges'
+
+exec pkms profile eject para $WORK/myprofile
+stdout 'ejected'
+exists $WORK/myprofile/profile.toml
+
+exec pkms init --path $WORK/vault --profile $WORK/myprofile
+stdout 'profile para'
+
+exec pkms lint --vault vault
+stdout 'clean: no findings'

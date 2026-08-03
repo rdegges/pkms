@@ -22,6 +22,8 @@ jobs:
         run: go vet ./...
       - name: test
         run: go test ./...
+      - name: e2e (new-user-experience scripts)
+        run: go test -tags=e2e ./e2e/...
 
   lint:
     runs-on: ubuntu-latest
@@ -33,6 +35,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
+          args: --build-tags e2e
 
   # Cross-compile + package exactly like a release would, minus publishing —
   # a broken .goreleaser.yaml fails here, not on tag day.

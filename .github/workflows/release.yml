@@ -25,7 +25,9 @@ jobs:
           cache: true
 
       - name: Run tests
-        run: go test -race -count=1 ./...
+        run: |
+          go test -race -count=1 ./...
+          go test -race -count=1 -tags=e2e ./e2e/...
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3

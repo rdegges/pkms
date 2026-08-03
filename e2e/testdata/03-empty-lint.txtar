@@ -1,0 +1,13 @@
+# Phase 3: lint on a pristine vault — clean, exit 0, stable JSON shapes
+# ([] and zeroed summary, never null: agents depend on this).
+
+exec pkms init --path $WORK/vault
+
+exec pkms lint
+stdout 'clean: no findings'
+
+exec pkms lint --json
+stdout '"findings": \[\]'
+stdout '"error": 0'
+stdout '"warning": 0'
+stdout '"vault": "vault"'

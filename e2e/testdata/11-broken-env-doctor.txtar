@@ -1,0 +1,12 @@
+# Phase 11 (walkthrough phase 12): doctor fails loudly and helpfully when
+# a registered vault disappears.
+
+exec pkms init --path $WORK/vault
+rm $WORK/vault
+
+! exec pkms doctor
+stdout 'vault-path'
+stdout '1 failures'
+
+! exec pkms doctor --json
+stdout '"status": "fail"'

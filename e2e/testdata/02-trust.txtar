@@ -1,0 +1,33 @@
+# Phase 2: trust checks — idempotence, dry-run, and the error messages a
+# new user hits first. Error copy quality is asserted, not just exit codes.
+
+exec pkms init --path $WORK/vault
+exec pkms init --path $WORK/vault
+grep -count=1 'name    = "vault"' $HOME/config.toml
+
+exec pkms init --path $WORK/vault2 --dry-run
+stdout 'plan'
+! exists $WORK/vault2
+grep -count=1 'name' $HOME/config.toml
+
+! exec pkms init --path relative/path
+stderr 'must be absolute'
+
+mkdir $WORK/notempty
+cp existing.md $WORK/notempty/existing.md
+! exec pkms init --path $WORK/notempty
+stderr 'use --adopt'
+
+exec pkms init --path $WORK/notempty --adopt --name adopted
+! exists $WORK/notempty/Projects
+exists $WORK/notempty/existing.md
+exists $WORK/notempty/.git
+
+! exec pkms lint --vault vault --rules no-such-rule
+stderr 'unknown lint rule "no-such-rule"'
+
+! exec pkms undo last --vault vault
+stderr 'no operations recorded'
+
+-- existing.md --
+already here
