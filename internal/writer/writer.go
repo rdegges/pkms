@@ -150,7 +150,7 @@ func quarantine(dir, noteType string, fields map[string]any, body string, verr e
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Write(raw); err != nil {
 		return "", err
 	}

@@ -71,7 +71,7 @@ func OpenState(path, source string) (*StateStore, error) {
 	s.f = f
 	if s.lines == 0 {
 		if err := s.append(stateLine{V: 1, Source: source}); err != nil {
-			f.Close()
+			_ = f.Close()
 			return nil, err
 		}
 	}
@@ -86,7 +86,7 @@ func (s *StateStore) load() error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	for sc.Scan() {
@@ -164,7 +164,7 @@ func (s *StateStore) compact() error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 	w := bufio.NewWriter(tmp)
 	enc := json.NewEncoder(w)
 	if err := enc.Encode(stateLine{V: 1, Source: s.source}); err != nil {

@@ -260,11 +260,7 @@ func (meetingPathDate) CheckVault(ctx *lint.Context) []lint.Finding {
 			continue
 		}
 		// parts: Meetings/<domain>/<YYYY>/<MM>/<DD>/...
-		depth := len(parts)
 		isFile := ctx.Ix.Files[p]
-		if isFile {
-			depth--
-		}
 		rest := parts[2:]
 		if isFile {
 			rest = parts[2 : len(parts)-1]

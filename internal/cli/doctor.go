@@ -158,7 +158,7 @@ func writableDir(dir string) error {
 	if err != nil {
 		return err
 	}
-	f.Close()
+	_ = f.Close()
 	return os.Remove(f.Name())
 }
 

@@ -26,7 +26,7 @@ func withVaultLock(v *config.Vault, out func(format string, a ...any), fn func()
 		}
 		return err
 	}
-	defer l.Release()
+	defer func() { _ = l.Release() }()
 	return fn()
 }
 

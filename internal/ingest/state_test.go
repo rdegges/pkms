@@ -27,7 +27,7 @@ func TestAckSeenPersistence(t *testing.T) {
 	// Reopen: acks, quarantines and cursor survive (crash recovery = this).
 	s2, err := OpenState(p, "imap:work")
 	require.NoError(t, err)
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 	require.True(t, s2.Seen("<msg-1@example.com>"), "acked records dedup after restart")
 	require.True(t, s2.Seen("<bad@example.com>"), "quarantined records never retry")
 	require.False(t, s2.Seen("<msg-2@example.com>"))
@@ -72,7 +72,7 @@ func TestCompaction(t *testing.T) {
 
 	s2, err := OpenState(p, "imap:work")
 	require.NoError(t, err)
-	defer s2.Close()
+	defer func() { _ = s2.Close() }()
 	require.Less(t, s2.lines, 10, "log compacted to header + acks + cursor")
 	require.True(t, s2.Seen("<keep-1@example.com>"), "seen set survives compaction")
 	require.Equal(t, float64(compactThreshold+9), s2.Cursor()["pos"])

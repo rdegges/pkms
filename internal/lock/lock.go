@@ -31,7 +31,7 @@ func Acquire(path string) (*Lock, error) {
 		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
+		_ = f.Close()
 		if err == syscall.EWOULDBLOCK {
 			return nil, ErrHeld{Path: path}
 		}
@@ -42,6 +42,6 @@ func Acquire(path string) (*Lock, error) {
 
 // Release drops the lock.
 func (l *Lock) Release() error {
-	defer l.f.Close()
+	defer func() { _ = l.f.Close() }()
 	return syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN)
 }
