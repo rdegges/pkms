@@ -18,9 +18,11 @@ import (
 	"github.com/rdegges/pkms/internal/vault"
 )
 
-// maxFixIterations bounds the fix→reparse loop; fixes are idempotent so a
-// file converges long before this.
-const maxFixIterations = 20
+// maxFixIterations is a runaway backstop only: the loop exits on lack of
+// progress, and the attempted-guard prevents reapplying the same fix, but
+// a file with N fixable findings legitimately needs N iterations (one fix
+// per file per iteration, re-parsing between).
+const maxFixIterations = 1000
 
 func newLintCmd() *cobra.Command {
 	var (
@@ -173,6 +175,9 @@ func applyFixes(cmd *cobra.Command, v *config.Vault, prof *profile.Profile, only
 			return err
 		}
 		current := findings
+		// A fix that "applies" without resolving its finding would reapply
+		// forever; each (path, rule, message) is attempted at most once.
+		attempted := map[string]bool{}
 		for iter := 0; iter < maxFixIterations; iter++ {
 			ix, err := vault.BuildIndex(v.Path, vault.WalkOptions{AttachmentsDir: prof.Attachments})
 			if err != nil {
@@ -180,7 +185,8 @@ func applyFixes(cmd *cobra.Command, v *config.Vault, prof *profile.Profile, only
 			}
 			touched := map[string]bool{}
 			for _, f := range current {
-				if !f.Fixable || touched[f.Path] {
+				key := fmt.Sprintf("%s\x00%s\x00%d\x00%s", f.Path, f.Rule, f.Line, f.Message)
+				if !f.Fixable || touched[f.Path] || attempted[key] {
 					continue
 				}
 				res, err := lint.Fix(ix, prof, v.Lint, f)
@@ -188,8 +194,11 @@ func applyFixes(cmd *cobra.Command, v *config.Vault, prof *profile.Profile, only
 					return err
 				}
 				if res == nil {
-					continue
+					continue // not applicable right now; may unblock later
 				}
+				// Bind the guard only to actual writes: a fix that applies
+				// without resolving its finding must not reapply forever.
+				attempted[key] = true
 				abs := filepath.Join(v.Path, filepath.FromSlash(f.Path))
 				switch {
 				case res.RenameTo != "":

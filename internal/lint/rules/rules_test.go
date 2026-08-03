@@ -494,6 +494,26 @@ s
 `
 }
 
+// TestBracketedTargetNeverFixable: a real filename containing wikilink
+// syntax chars ([C]) must never produce a single-repair fix — the repair
+// cannot round-trip through [[...]] parsing and corrupts the link
+// (regression: bracket growth on every --fix run).
+func TestBracketedTargetNeverFixable(t *testing.T) {
+	files := map[string]string{
+		"People/Snyk/Janet Giesen [C].md": validPerson,
+		"log.md":                          "# Log\n\n## [2026-05-06] update | x\n- remediated [[Janet Giesen [C]]] today\n",
+	}
+	ix, prof, _ := buildVault(t, files)
+	fs, err := lint.Run(ix, prof, nil, []string{"wikilink-resolves"})
+	require.NoError(t, err)
+	for _, f := range fs {
+		require.False(t, f.Fixable, "bracketed targets are never auto-repaired: %+v", f)
+		res, ferr := lint.Fix(ix, prof, nil, f)
+		require.NoError(t, ferr)
+		require.Nil(t, res)
+	}
+}
+
 // TestFixIdempotence: applying every fix converges and a second pass
 // changes nothing (fix twice = no-op, SPEC §8).
 func TestFixIdempotence(t *testing.T) {

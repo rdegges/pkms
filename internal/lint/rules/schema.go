@@ -152,12 +152,15 @@ func (topicsKebab) Fix(ctx *lint.Context, n *vault.Note, f lint.Finding) (*lint.
 	if fixed == "" || fixed == old {
 		return nil, nil
 	}
-	// The topic appears as a list item or inline-list element; replace the
-	// first exact occurrence within the frontmatter block.
+	// Replace only where the topic actually lives: its own list-item line
+	// or the topics: flow line — never a coincidental match elsewhere.
+	itemRe := regexp.MustCompile(`^(\s*-\s*["']?)` + regexp.QuoteMeta(old) + `(["']?\s*)$`)
+	flowRe := regexp.MustCompile(`^\s*topics:.*` + regexp.QuoteMeta(old))
 	lines := srcLines(n.Src)
 	end := n.FM.EndLine
 	for i := 1; i < end && i < len(lines); i++ {
-		if bytes.Contains(lines[i], []byte(old)) {
+		line := bytes.TrimSuffix(lines[i], []byte("\n"))
+		if itemRe.Match(line) || flowRe.Match(line) {
 			lines[i] = bytes.Replace(lines[i], []byte(old), []byte(fixed), 1)
 			return &lint.FixResult{NewSrc: joinLines(lines)}, nil
 		}

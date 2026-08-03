@@ -93,9 +93,16 @@ func (wikilinkResolves) CheckNote(ctx *lint.Context, n *vault.Note) []lint.Findi
 }
 
 // singleRepairCandidate finds the unique basename within Levenshtein
-// distance 2 of the broken target (docs/LINT-RULES.md single-repair rule).
+// distance 1 of the broken target (docs/LINT-RULES.md single-repair rule).
+// Distance 1 only: at distance 2 the repair starts guessing between real
+// distinct names (observed: [[Jamie Cairns]] "repaired" to the different
+// real person James Cairns). Targets or candidates containing wikilink
+// syntax chars are never auto-repaired: rewriting them cannot round-trip
+// through [[...]] parsing (real-world case: a filename like "Janet [C].md"
+// — the fix would corrupt the link a little more on every run).
 func singleRepairCandidate(ctx *lint.Context, l vault.Link) string {
-	if l.Kind != vault.KindWikilink || strings.Contains(l.Target, "/") || l.Target == "" {
+	if l.Kind != vault.KindWikilink || strings.Contains(l.Target, "/") || l.Target == "" ||
+		strings.ContainsAny(l.Target, "[]|#") {
 		return ""
 	}
 	target := strings.ToLower(l.Target)
@@ -107,7 +114,10 @@ func singleRepairCandidate(ctx *lint.Context, l vault.Link) string {
 			continue
 		}
 		seen[base] = true
-		if levenshtein(target, strings.ToLower(base)) <= 2 {
+		if strings.ContainsAny(base, "[]|#") {
+			continue
+		}
+		if levenshtein(target, strings.ToLower(base)) <= 1 {
 			candidates = append(candidates, base)
 		}
 	}

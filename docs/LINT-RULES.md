@@ -306,7 +306,12 @@ Conventions:
 - Fail example: `[[Nonexistent Person]]` in a meeting's attendees when no
   such note exists anywhere.
 - Fixable: single-repair only — exactly one existing basename within
-  Levenshtein ≤ 2, or a unique case-insensitive match. Otherwise report.
+  **Levenshtein ≤ 1** (case-insensitive matches already resolve, per §5).
+  Otherwise report. (Amended from ≤ 2 during acceptance: at distance 2 the
+  repair guesses between real distinct names — observed `[[Jamie Cairns]]`
+  "repaired" to the different real person James Cairns.) Targets or
+  candidates containing `[ ] | #` are never auto-repaired (cannot
+  round-trip through wikilink syntax).
 
 ### wikilink-ambiguous
 - Severity: warning. Scope: bare-basename wikilinks.
