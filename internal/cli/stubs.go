@@ -20,8 +20,5 @@ func notImplemented(name string) *cobra.Command {
 	}
 }
 
-func newSnapshotCmd() *cobra.Command { return notImplemented("snapshot") }
-func newUndoCmd() *cobra.Command     { return notImplemented("undo") }
-func newHistoryCmd() *cobra.Command  { return notImplemented("history") }
-func newLintCmd() *cobra.Command     { return notImplemented("lint") }
-func newQueryCmd() *cobra.Command    { return notImplemented("query") }
+func newLintCmd() *cobra.Command  { return notImplemented("lint") }
+func newQueryCmd() *cobra.Command { return notImplemented("query") }
