@@ -26,15 +26,15 @@ on top of its `--json` outputs.
 
 ## Install
 
-Grab a binary from [Releases](https://github.com/rdegges/pkms/releases)
-(macOS/Linux, arm64/amd64):
+Homebrew:
 
 ```sh
-curl -Lo pkms https://github.com/rdegges/pkms/releases/latest/download/pkms-darwin-arm64
-chmod +x pkms && mv pkms ~/.local/bin/
+brew install rdegges/tap/pkms
 ```
 
-Or build from source (Go 1.26+): `go install github.com/rdegges/pkms/cmd/pkms@latest`
+Or grab an archive from [Releases](https://github.com/rdegges/pkms/releases)
+(macOS/Linux, arm64/amd64), or build from source (Go 1.26+):
+`go install github.com/rdegges/pkms/cmd/pkms@latest`
 
 Snapshots need `git` (≥ 2.30) on your PATH. Everything else works without it.
 

@@ -1,0 +1,123 @@
+version: 2
+
+project_name: pkms
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: pkms
+    main: ./cmd/pkms
+    binary: pkms
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X github.com/rdegges/pkms/internal/cli.version={{.Version}}
+      - -X github.com/rdegges/pkms/internal/cli.commit={{.ShortCommit}}
+
+archives:
+  - id: pkms
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - README.md
+      - LICENSE
+      - docs/SPEC.md
+      - docs/LINT-RULES.md
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^chore\\(deps\\):"
+      - "^chore\\(ci\\):"
+      - "^Merge pull request"
+      - "^Merge branch"
+  groups:
+    - title: Features
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: Bug fixes
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: Documentation
+      regexp: "^.*docs[(\\w)]*:+.*$"
+      order: 2
+    - title: Other
+      order: 999
+
+release:
+  github:
+    owner: rdegges
+    name: pkms
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## pkms {{ .Tag }}
+
+    Install via Homebrew:
+    ```bash
+    brew install rdegges/tap/pkms
+    ```
+
+    Install via `go install`:
+    ```bash
+    go install github.com/rdegges/pkms/cmd/pkms@{{ .Tag }}
+    ```
+
+    Or download a pre-built binary below.
+  footer: |
+    ---
+
+    Full changelog: https://github.com/rdegges/pkms/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+# homebrew_casks replaced the deprecated `brews` (goreleaser >= 2.10).
+# Casks are macOS-only; Linux users install from release binaries/go install.
+homebrew_casks:
+  - name: pkms
+    repository:
+      owner: rdegges
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Casks
+    homepage: "https://github.com/rdegges/pkms"
+    description: "Deterministic manager for Obsidian-compatible markdown vaults: scaffold, lint, snapshot, query"
+    commit_author:
+      name: pkms-release-bot
+      email: noreply@github.com
+    commit_msg_template: "chore(pkms): release {{ .Tag }}"
+    caveats: |
+      Snapshots use git (>= 2.30). Everything else works without it.
+      Get started: pkms init --path ~/Vault
+    # Unsigned binary: strip the quarantine attribute so Gatekeeper doesn't
+    # block it (snippet from the goreleaser brews->casks migration guide).
+    hooks:
+      post:
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/pkms"]
+          end

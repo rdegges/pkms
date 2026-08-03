@@ -5,35 +5,34 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  release:
+  goreleaser:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release and upload artifacts
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          go-version: "1.26.5"
-      - name: test
-        run: go test ./...
-      - name: build all platforms
+          fetch-depth: 0 # goreleaser needs full history for the changelog
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test -race -count=1 ./...
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
         env:
-          CGO_ENABLED: "0"
-        run: |
-          set -euo pipefail
-          VERSION="${GITHUB_REF_NAME}"
-          COMMIT="$(git rev-parse --short HEAD)"
-          LDFLAGS="-X github.com/rdegges/pkms/internal/cli.version=${VERSION} -X github.com/rdegges/pkms/internal/cli.commit=${COMMIT}"
-          for platform in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
-            GOOS="${platform%/*}" GOARCH="${platform#*/}" \
-              go build -trimpath -ldflags "$LDFLAGS" \
-              -o "dist/pkms-${platform%/*}-${platform#*/}" ./cmd/pkms
-          done
-          (cd dist && shasum -a 256 pkms-* > checksums.txt)
-      - name: create release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${GITHUB_REF_NAME}" dist/pkms-* dist/checksums.txt \
-            --title "pkms ${GITHUB_REF_NAME}" --generate-notes
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
