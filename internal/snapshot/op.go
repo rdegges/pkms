@@ -62,7 +62,6 @@ func Begin(v *config.Vault, kind string, now time.Time) (*Op, error) {
 	}
 
 	op := &Op{
-		ID:        fmt.Sprintf("%s-%s", kind, now.UTC().Format("20060102T150405Z")),
 		Kind:      kind,
 		Vault:     v.Name,
 		Started:   now.UTC(),
@@ -70,7 +69,21 @@ func Begin(v *config.Vault, kind string, now time.Time) (*Op, error) {
 		g:         g,
 		written:   map[string]bool{},
 	}
-	op.path = filepath.Join(opsDir(v.Name), op.ID+".json")
+	// Second-resolution IDs can collide (two quick runs); suffix until free.
+	base := fmt.Sprintf("%s-%s", kind, now.UTC().Format("20060102T150405Z"))
+	for i := 1; ; i++ {
+		op.ID = base
+		if i > 1 {
+			op.ID = fmt.Sprintf("%s-%d", base, i)
+		}
+		op.path = filepath.Join(opsDir(v.Name), op.ID+".json")
+		if _, err := os.Stat(op.path); os.IsNotExist(err) {
+			break
+		}
+		if i > 1000 {
+			return nil, fmt.Errorf("cannot allocate op id for %s", base)
+		}
+	}
 	if err := op.save(); err != nil {
 		return nil, err
 	}
@@ -119,18 +132,40 @@ func (o *Op) End(summary string) error {
 	return o.save()
 }
 
+// save writes the journal atomically (temp + rename): a crash mid-save must
+// never leave a corrupt op file — undo depends on the write list.
 func (o *Op) save() error {
-	if err := os.MkdirAll(filepath.Dir(o.path), 0o755); err != nil {
+	dir := filepath.Dir(o.path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 	raw, err := json.MarshalIndent(o, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(o.path, raw, 0o644)
+	tmp, err := os.CreateTemp(dir, ".op-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(raw); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), o.path)
 }
 
 // LoadOp reads an op by ID, or the most recent one for id == "last".
+// "Last" is chronological (the journals' Started timestamps) — sorting the
+// IDs lexicographically would compare the KIND prefix first, so "undo-..."
+// would always beat "lint-fix-..." regardless of time (codex finding).
 func LoadOp(vaultName, id string) (*Op, error) {
 	dir := opsDir(vaultName)
 	if id == "last" || id == "" {
@@ -138,21 +173,36 @@ func LoadOp(vaultName, id string) (*Op, error) {
 		if err != nil {
 			return nil, fmt.Errorf("no operations recorded for vault %q", vaultName)
 		}
-		var ids []string
+		var latest *Op
 		for _, e := range entries {
-			if strings.HasSuffix(e.Name(), ".json") {
-				ids = append(ids, strings.TrimSuffix(e.Name(), ".json"))
+			if !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			op, err := readOp(filepath.Join(dir, e.Name()))
+			if err != nil {
+				continue // skip corrupt journals; named lookup still works
+			}
+			if latest == nil || op.Started.After(latest.Started) ||
+				(op.Started.Equal(latest.Started) && op.ID > latest.ID) {
+				latest = op
 			}
 		}
-		if len(ids) == 0 {
+		if latest == nil {
 			return nil, fmt.Errorf("no operations recorded for vault %q", vaultName)
 		}
-		sort.Strings(ids)
-		id = ids[len(ids)-1]
+		return latest, nil
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, id+".json"))
+	op, err := readOp(filepath.Join(dir, id+".json"))
 	if err != nil {
 		return nil, fmt.Errorf("unknown operation %q for vault %q", id, vaultName)
+	}
+	return op, nil
+}
+
+func readOp(path string) (*Op, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
 	var op Op
 	if err := json.Unmarshal(raw, &op); err != nil {

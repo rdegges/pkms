@@ -159,3 +159,57 @@ func TestHistoryListsOps(t *testing.T) {
 func TestHostnameSanitized(t *testing.T) {
 	require.Regexp(t, `^[a-z0-9-]+$`, Hostname())
 }
+
+// "last" must be chronological, not lexicographic: "undo-*" sorts after
+// "lint-fix-*" as a string no matter when it ran (codex finding).
+func TestLoadOpLastIsChronological(t *testing.T) {
+	v := newVault(t)
+
+	early, err := Begin(v, "undo", t0)
+	require.NoError(t, err)
+	require.NoError(t, early.End("early"))
+
+	late, err := Begin(v, "lint-fix", t0.Add(time.Hour))
+	require.NoError(t, err)
+	require.NoError(t, late.End("late"))
+
+	got, err := LoadOp(v.Name, "last")
+	require.NoError(t, err)
+	require.Equal(t, late.ID, got.ID, "chronologically last, despite 'undo' > 'lint-fix' lexically")
+}
+
+// Two ops of the same kind in the same second get distinct journals.
+func TestOpIDCollisionSuffix(t *testing.T) {
+	v := newVault(t)
+	a, err := Begin(v, "lint-fix", t0)
+	require.NoError(t, err)
+	require.NoError(t, a.End("a"))
+	b, err := Begin(v, "lint-fix", t0)
+	require.NoError(t, err)
+	require.NoError(t, b.End("b"))
+	require.NotEqual(t, a.ID, b.ID)
+}
+
+// A vault nested inside a parent repository must NOT be treated as its own
+// repo: `git add -A` is tree-wide and would stage the parent's files.
+func TestNestedVaultIsNotItsOwnRepo(t *testing.T) {
+	parent := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", filepath.Join(t.TempDir(), "state"))
+	require.NoError(t, gitx.Init(parent))
+	vaultDir := filepath.Join(parent, "vault")
+	require.NoError(t, os.MkdirAll(vaultDir, 0o755))
+	write(t, vaultDir, "Note.md", "x\n")
+	write(t, parent, "parent-secret.txt", "never commit me via pkms\n")
+
+	v := &config.Vault{Name: "nested", Path: vaultDir, Profile: "para"}
+	r := Take(v, t0)
+	require.Equal(t, "error", r.Status, "snapshot refuses the parent work tree")
+	require.Contains(t, r.Detail, "not a git repository")
+
+	// After a real init in the vault, snapshots stay scoped to it.
+	require.NoError(t, gitx.Init(vaultDir))
+	r = Take(v, t0)
+	require.Equal(t, "committed", r.Status)
+	out := rawGit(t, parent, "status", "--porcelain")
+	require.Contains(t, out, "parent-secret.txt", "parent repo untouched by pkms")
+}

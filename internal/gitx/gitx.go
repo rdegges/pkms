@@ -70,10 +70,18 @@ func Init(dir string) error {
 	return err
 }
 
-// IsRepo reports whether Dir is inside a git work tree.
+// IsRepo reports whether Dir is itself a repository ROOT. Being merely
+// inside a parent work tree does NOT count: `git add -A` is tree-wide, so
+// treating a nested vault as "already a repo" would let pkms stage and
+// commit the PARENT repository's files (codex adversarial finding).
 func (g Git) IsRepo() bool {
-	out, err := g.run("rev-parse", "--is-inside-work-tree")
-	return err == nil && out == "true"
+	top, err := g.run("rev-parse", "--show-toplevel")
+	if err != nil {
+		return false
+	}
+	realTop, err1 := filepath.EvalSymlinks(top)
+	realDir, err2 := filepath.EvalSymlinks(g.Dir)
+	return err1 == nil && err2 == nil && realTop == realDir
 }
 
 // HasCommits reports whether HEAD resolves.
