@@ -538,6 +538,26 @@ string (req), `tags` string[] ⊇ {`recipe`} (req); `domain`, `status`,
 
 ---
 
+## Implementation mapping (catalog rule → engine rule ID)
+
+The engine consolidates the pure-schema catalog rules into one parametrized
+rule, `frontmatter-schema` (per SPEC §12: rules are generic, profiles
+instantiate). Findings carry the engine rule ID; semantics are unchanged:
+
+- `person-required-keys`, `meeting-required-keys` (schema-expressible part),
+  `daily-brief-schema`, `project-required-keys`, `resource-clip-schema`,
+  `recipe-schema`, `recipe-macros-estimated-flag` (via `dependentRequired`),
+  `session-trace-schema`, `clip-raw-schema` → **`frontmatter-schema`**,
+  validated against the profile's per-type JSON Schemas. Per-type warning
+  severity comes from its `warning_types` config.
+- Missing-frontmatter detection is **`frontmatter-present`** (its own
+  `warning_types` covers session-trace/raw-clip; the session-trace fix
+  creates the block with filename-derived `date`/`slug`).
+- The path-dependent slice of `meeting-required-keys` (tags must contain the
+  domain segment) is **`meeting-tags-domain`**.
+- `meeting-date-matches-path` also covers the daily-brief date==path check.
+- All other catalog rules keep their IDs 1:1.
+
 ## Deferred to the agent layer (judgment — never lint rules)
 
 1. PARA bucket correctness (Projects vs Areas vs Resources; domain call).

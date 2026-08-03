@@ -20,5 +20,4 @@ func notImplemented(name string) *cobra.Command {
 	}
 }
 
-func newLintCmd() *cobra.Command  { return notImplemented("lint") }
 func newQueryCmd() *cobra.Command { return notImplemented("query") }

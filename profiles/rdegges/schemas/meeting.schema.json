@@ -11,7 +11,7 @@
     "has_transcript": { "type": "boolean" },
     "attendees": {
       "type": "array",
-      "items": { "type": "string", "pattern": "^\\[\\[[^\\]|#]+\\]\\]$" }
+      "items": { "type": "string" }
     },
     "tags": {
       "type": "array",

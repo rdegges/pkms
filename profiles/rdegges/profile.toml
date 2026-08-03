@@ -132,10 +132,22 @@ keys = [
   "date_clipped", "date_published", "published",
 ]
 
+[lint.frontmatter-present]
+# Types where a missing frontmatter block is a warning, not an error
+# (violated at scale in the reference vault). session-trace is fixable:
+# date/slug derive from a conforming filename.
+warning_types = ["session-trace", "raw-clip"]
+
 [lint.frontmatter-schema]
 # Types whose schema failures are warnings, not errors (violated at scale
 # in the reference vault; ratchet later).
 warning_types = ["project", "session-trace", "raw-clip"]
+
+[lint.meeting-tags-domain]
+# tags must contain the lowercase domain segment from the path
+# (Meetings/Snyk/... -> "snyk"). Split out of meeting-required-keys
+# because it is path-dependent (schemas cannot express it).
+enabled = true
 
 [lint.person-topics-kebab-case]
 enabled = true
@@ -154,9 +166,6 @@ enabled = true
 
 [lint.project-status-vocab]
 allowlist = ["active", "inactive", "idea", "proposed", "in-progress", "archived"]
-
-[lint.recipe-macros-estimated-flag]
-enabled = true
 
 [lint.frontmatter-key-order]
 enabled = false
@@ -254,11 +263,19 @@ file = "Resources/Personal/Recipes/Recipes.md"
 key = "recipe_count"
 counts = "Resources/Personal/Recipes/*.md"
 
+[lint.recipes-index-links-complete]
+file = "Resources/Personal/Recipes/Recipes.md"
+lists = "Resources/Personal/Recipes/*.md"
+
 [lint.resources-cataloged-in-index]
 severity = "warning"
+file = "index.md"
+lists = "Resources/{Snyk,Personal}/*.md"
 
 [lint.projects-linked-from-master]
 severity = "warning"
+file = "Projects.md"
+lists = "Projects/{Snyk,Personal}/*.md"
 
 [lint.index-no-inventory]
 file = "index.md"
