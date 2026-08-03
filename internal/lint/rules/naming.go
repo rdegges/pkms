@@ -124,6 +124,9 @@ func (r rootCanonical) CheckVault(ctx *lint.Context) []lint.Finding {
 		if strings.Contains(f, "/") || contains(r.files, f) || contains(r.allow, f) {
 			continue
 		}
+		if f == ".gitignore" {
+			continue // pkms init writes it (SPEC §9); never a finding
+		}
 		// Case-variant of a canonical file → root-file-name-case territory.
 		if caseVariantOf(f, r.files) != "" {
 			continue
