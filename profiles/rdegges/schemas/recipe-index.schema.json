@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "recipe-index",
+  "type": "object",
+  "required": ["type", "sub_domain", "recipe_count"],
+  "properties": {
+    "type": { "const": "resource" },
+    "sub_domain": { "const": "recipes" },
+    "recipe_count": { "type": "integer", "minimum": 0 },
+    "last_updated": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" }
+  }
+}

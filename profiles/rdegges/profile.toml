@@ -1,0 +1,320 @@
+# The author's production vault conventions: PARA + Snyk/Personal domain
+# split + People/ + Meetings/. Shipped as the flagship real-world example of
+# the profile format. See docs/LINT-RULES.md for the rule semantics.
+schema_version = 1
+name = "rdegges"
+description = "PARA with Snyk/Personal domain split, People and Meetings"
+
+attachments = "+"
+
+scaffold = [
+  "Projects/Snyk", "Projects/Personal",
+  "Areas/Snyk", "Areas/Personal", "Areas/Writing",
+  "Resources/Snyk", "Resources/Personal",
+  "Resources/Clips/Inbox", "Resources/Clips/Processed",
+  "Resources/Personal/Recipes", "Resources/Personal/Session Traces",
+  "Archive/Snyk", "Archive/Personal",
+  "People/Snyk", "People/Personal",
+  "Meetings/Snyk", "Meetings/Personal",
+]
+root_files = []
+
+# ---- Note types (order matters: content-triggered types precede fallbacks) --
+
+[[types]]
+name = "action-items"
+scope = ["Action Items.md"]
+schema = "schemas/action-items.schema.json"
+
+[[types]]
+name = "canonical-root"
+scope = ["Now.md", "Preferences.md", "Projects.md", "People.md", "Areas.md"]
+
+[[types]]
+name = "machine-root"
+scope = ["index.md", "log.md"]
+
+[[types]]
+name = "person"
+scope = ["People/Snyk/*.md", "People/Personal/*.md"]
+schema = "schemas/person.schema.json"
+folder = "People/{{.category}}"
+filename = "{{.name}}"
+
+[[types]]
+name = "daily-brief"
+scope = ["Meetings/*/[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]/daily-brief.md"]
+schema = "schemas/daily-brief.schema.json"
+
+[[types]]
+name = "pre-brief"
+scope = ["Meetings/*/[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]/pre-brief.md"]
+
+[[types]]
+name = "meeting"
+scope = ["Meetings/*/[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]/*.md"]
+schema = "schemas/meeting.schema.json"
+folder = "Meetings/{{.category}}/{{year .date}}/{{month .date}}/{{day .date}}"
+filename = "{{.hhmm}} - {{.title}}"
+
+[[types]]
+name = "project"
+scope = ["Projects/Snyk/*.md", "Projects/Personal/*.md"]
+schema = "schemas/project.schema.json"
+folder = "Projects/{{.category}}"
+filename = "{{.title}}"
+
+[[types]]
+name = "recipe-index"
+scope = ["Resources/Personal/Recipes/Recipes.md"]
+schema = "schemas/recipe-index.schema.json"
+
+[[types]]
+name = "recipe"
+scope = ["Resources/Personal/Recipes/*.md"]
+schema = "schemas/recipe.schema.json"
+folder = "Resources/Personal/Recipes"
+filename = "{{.title}}"
+
+[[types]]
+name = "session-trace"
+scope = ["Resources/Personal/Session Traces/*.md"]
+schema = "schemas/session-trace.schema.json"
+
+[[types]]
+name = "raw-clip"
+scope = ["Resources/Clips/Inbox/*.md", "Resources/Clips/Processed/*.md"]
+schema = "schemas/raw-clip.schema.json"
+
+[[types]]
+name = "clip-summary"
+scope = ["Resources/Snyk/*.md", "Resources/Personal/*.md"]
+require_any_key = ["source_url", "date_clipped"]
+schema = "schemas/clip-summary.schema.json"
+folder = "Resources/{{.category}}"
+filename = "{{.title}}"
+
+[[types]]
+name = "resource-generic"
+scope = ["Resources/Snyk/*.md", "Resources/Personal/*.md"]
+
+[[types]]
+name = "area"
+scope = ["Areas/**/*.md"]
+
+[[types]]
+name = "archived"
+scope = ["Archive/**"]
+
+# ---- Index contracts (drift-checked by lint) --------------------------------
+
+[[indexes]]
+file = "Projects.md"
+lists = "Projects/{Snyk,Personal}/*.md"
+policy = "must-link-all"
+
+[[indexes]]
+file = "index.md"
+lists = "Resources/{Snyk,Personal}/*.md"
+policy = "must-link-all"
+
+[[indexes]]
+file = "Resources/Personal/Recipes/Recipes.md"
+lists = "Resources/Personal/Recipes/*.md"
+policy = "must-link-all"
+
+# ---- Lint configuration ------------------------------------------------------
+# Rule semantics live in docs/LINT-RULES.md; these tables only parametrize.
+
+[lint.date-format-iso]
+keys = [
+  "date", "last_met", "created", "updated", "last_updated",
+  "date_clipped", "date_published", "published",
+]
+
+[lint.frontmatter-schema]
+# Types whose schema failures are warnings, not errors (violated at scale
+# in the reference vault; ratchet later).
+warning_types = ["project", "session-trace", "raw-clip"]
+
+[lint.person-topics-kebab-case]
+enabled = true
+
+[lint.meeting-attendees-are-wikilinks]
+enabled = true
+
+[lint.meeting-date-matches-path]
+enabled = true
+
+[lint.meeting-time-matches-filename]
+enabled = true
+
+[lint.project-category-matches-path]
+enabled = true
+
+[lint.project-status-vocab]
+allowlist = ["active", "inactive", "idea", "proposed", "in-progress", "archived"]
+
+[lint.recipe-macros-estimated-flag]
+enabled = true
+
+[lint.frontmatter-key-order]
+enabled = false
+
+[lint.root-canonical-only]
+files = [
+  "Now.md", "Preferences.md", "Projects.md", "People.md", "Areas.md",
+  "Action Items.md", "index.md", "log.md",
+]
+allowlist = []
+
+[lint.top-level-folders-fixed]
+dirs = ["Projects", "Areas", "Resources", "Archive", "People", "Meetings"]
+allowlist = []
+
+[lint.domain-split-folders]
+"Projects" = ["Snyk", "Personal"]
+"Archive" = ["Snyk", "Personal"]
+"Meetings" = ["Snyk", "Personal"]
+"People" = ["Snyk", "Personal"]
+"Areas" = ["Snyk", "Personal", "Writing"]
+"Resources" = ["Snyk", "Personal", "Clips"]
+
+[lint.meeting-filename-format]
+extra_allowed = ["daily-brief.md", "pre-brief.md"]
+
+[lint.clip-processed-filename]
+enabled = true
+
+[lint.session-trace-filename]
+enabled = true
+
+[lint.filename-safe-chars]
+enabled = true
+
+[lint.no-per-run-notes]
+patterns = [
+  '(?i)(Email|Slack|Meeting) Sync\b',
+  '(?i)Proactive (Prep|Run|Work)\b',
+  '(?i)Vault Maintenance( Report)?\b',
+  '(?i)Email Triage\b',
+  '(?i)OOO .*Sweep',
+  '(?i)Vacation Catch-?up',
+  '(?i)^(Sync|Run) \d{4}-\d{2}-\d{2}',
+]
+
+[lint.no-drafts-folder]
+dir = "Drafts"
+patterns = ['^(Slack|Email) - .+ - .+\.md$']
+
+[lint.no-junk-files]
+patterns = ['*.bak', '.DS_Store', '* conflicted copy*', '~$*', '*.tmp']
+underscore_exempt = ["_template.md"]
+
+[lint.non-markdown-in-note-folders]
+scopes = ["People/**", "Meetings/**"]
+
+[lint.template-placeholders-in-real-notes]
+enabled = true
+
+[lint.empty-note]
+enabled = true
+
+[lint.wikilink-resolves]
+enabled = true
+
+[lint.wikilink-ambiguous]
+enabled = true
+
+[lint.no-broken-embed]
+enabled = true
+
+[lint.attendee-links-resolve-to-people]
+folder = "People/"
+
+[lint.related-people-resolve-to-people]
+folder = "People/"
+
+[lint.related-projects-resolve]
+folders = ["Projects/", "Archive/"]
+
+[lint.person-meeting-history-links-resolve]
+enabled = true
+
+[lint.orphan-notes]
+scopes = ["Projects/Snyk/*.md", "Projects/Personal/*.md", "Resources/Snyk/*.md", "Resources/Personal/*.md"]
+catalogs = ["Projects.md", "index.md", "Resources/Personal/Recipes/Recipes.md"]
+
+[lint.action-items-count-drift]
+file = "Action Items.md"
+key = "total_items"
+
+[lint.recipes-count-drift]
+file = "Resources/Personal/Recipes/Recipes.md"
+key = "recipe_count"
+counts = "Resources/Personal/Recipes/*.md"
+
+[lint.resources-cataloged-in-index]
+severity = "warning"
+
+[lint.projects-linked-from-master]
+severity = "warning"
+
+[lint.index-no-inventory]
+file = "index.md"
+forbidden_prefixes = ["Meetings/", "People/"]
+
+[lint.log-entry-format]
+file = "log.md"
+
+[lint.log-action-vocab]
+file = "log.md"
+allowlist = [
+  "ingest", "lint", "update", "create", "archive",
+  "slack-sync", "email-sync", "proactive-work", "daily-brief", "maintenance",
+]
+
+[lint.log-newest-first]
+file = "log.md"
+
+[lint.now-line-cap]
+file = "Now.md"
+warn_at = 60
+error_at = 80
+
+[lint.now-fixed-sections]
+file = "Now.md"
+sections = ["Today", "This Week", "Active Projects", "Blocked / Waiting On", "Watching", "Notes"]
+
+[lint.now-no-sync-sections]
+file = "Now.md"
+patterns = [
+  '(?i)^New from .*',
+  '(?i).*[Ss]ync.*\d{4}-\d{2}-\d{2}',
+  '(?i)^Proactive Prep.*',
+  '(?i)^From .* (email|slack) sync',
+]
+
+[lint.now-active-projects-shape]
+file = "Now.md"
+section = "Active Projects"
+min_bullets = 5
+max_bullets = 8
+
+[lint.person-required-sections]
+sections = ["Meta", "Relationship", "Meeting History"]
+
+[lint.person-meta-last-updated]
+enabled = true
+
+[lint.person-meeting-history-bullet-format]
+enabled = true
+
+[lint.meeting-required-sections]
+sections = ["Attendees", "Summary", "Key Decisions"]
+
+[lint.daily-brief-per-day]
+enabled = true
+
+[lint.log-entry-bullets-flat]
+enabled = false

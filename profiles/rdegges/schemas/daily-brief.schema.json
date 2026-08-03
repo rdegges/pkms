@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "daily-brief",
+  "type": "object",
+  "required": ["date", "type", "tags"],
+  "properties": {
+    "date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+    "type": { "const": "daily-brief" },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "contains": { "const": "daily-brief" }
+    }
+  }
+}

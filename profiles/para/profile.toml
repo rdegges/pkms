@@ -1,0 +1,30 @@
+schema_version = 1
+name = "para"
+description = "PARA: Projects / Areas / Resources / Archive"
+
+scaffold = ["Projects", "Areas", "Resources", "Archive"]
+root_files = []
+
+# No typed notes in the generic profile: only profile-agnostic lint rules
+# (frontmatter well-formedness, links, junk files, placeholders) apply.
+
+[lint.frontmatter-present]
+enabled = false # no typed notes to require frontmatter of
+
+[lint.no-junk-files]
+enabled = true
+
+[lint.template-placeholders-in-real-notes]
+enabled = true
+
+[lint.empty-note]
+enabled = true
+
+[lint.wikilink-resolves]
+enabled = true
+
+[lint.wikilink-ambiguous]
+enabled = true
+
+[lint.no-broken-embed]
+enabled = true
