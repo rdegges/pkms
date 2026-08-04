@@ -65,6 +65,12 @@ type dropReporter interface {
 	DroppedItems() int
 }
 
+// identitySetter receives the vault/source identity ingesters need for
+// keyring secret lookups (SPEC §24).
+type identitySetter interface {
+	SetIdentity(vaultName, sourceName string)
+}
+
 // Runner executes configured ingesters for one vault (SPEC §17).
 type Runner struct {
 	Vault   *config.Vault
@@ -110,6 +116,9 @@ func (r *Runner) RunSource(ctx context.Context, ic config.IngesterConfig) (*Resu
 	}
 	if d, ok := ing.(noteTypeDefaulter); ok {
 		d.SetNoteType(r.Profile.Ingest.Clip)
+	}
+	if id, ok := ing.(identitySetter); ok {
+		id.SetIdentity(r.Vault.Name, ic.Name)
 	}
 	return r.run(ctx, ic, ing)
 }

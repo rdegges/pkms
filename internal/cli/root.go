@@ -44,6 +44,8 @@ func newRootCmd() *cobra.Command {
 		newQueryCmd(),
 		newProfileCmd(),
 		newIngestCmd(),
+		newSecretCmd(),
+		newAuthCmd(),
 	)
 	return root
 }

@@ -12,7 +12,8 @@ import (
 	"github.com/rdegges/pkms/internal/config"
 	"github.com/rdegges/pkms/internal/fetch"
 	"github.com/rdegges/pkms/internal/ingest"
-	_ "github.com/rdegges/pkms/internal/ingest/rss" // registers "rss"
+	_ "github.com/rdegges/pkms/internal/ingest/imap" // registers "imap"
+	_ "github.com/rdegges/pkms/internal/ingest/rss"  // registers "rss"
 	"github.com/rdegges/pkms/internal/profile"
 )
 

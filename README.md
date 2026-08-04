@@ -99,13 +99,57 @@ pkms undo last          # reverts exactly the files that operation touched —
                         # your concurrent edits are never rolled back
 ```
 
+## Ingest: web pages, feeds, and email → notes
+
+One-shot: throw a URL (or local file) at your vault and it lands as a clip
+note in your inbox folder, converted to clean markdown:
+
+```sh
+pkms ingest https://example.com/great-article
+# ingested → Inbox/2026-08-03T142530+0000 - Great Article.md
+
+pkms ingest https://example.com/great-article    # run it again —
+# already ingested → Inbox/2026-08-03T142530+0000 - Great Article.md
+```
+
+Scheduled: configure pull ingesters once, then let cron call `pkms ingest`.
+Every record is deduplicated by a natural key (email Message-ID, feed GUID,
+canonical URL), acknowledged only after its note is durably written, and
+quarantined outside the vault if it fails schema validation. Re-runs and
+crash recoveries never duplicate a note and never lose one.
+
+```toml
+[[vaults.ingesters]]
+type = "rss"
+name = "hn"
+url  = "https://hnrss.org/frontpage"
+
+[[vaults.ingesters]]
+type     = "imap"
+name     = "fastmail"
+host     = "imap.fastmail.com"
+username = "you@fastmail.com"
+auth     = "password"          # app password — see below
+```
+
+Secrets never live in config: pkms checks the OS keyring
+(`pkms secret set fastmail password`), then `PKMS_*` env vars, then an
+optional `password_cmd` argv array (`["op", "read", "op://…"]`). IMAP is
+strictly read-only — pkms never marks mail as read, never deletes, and
+resumes UIDVALIDITY-aware. Gmail works via app passwords or your own OAuth
+client (`pkms auth gmail` — honest ~30-minute walkthrough in
+[docs/OAUTH-GMAIL.md](docs/OAUTH-GMAIL.md)).
+
+Fetches are hardened by default: private/link-local addresses are refused
+(SSRF guard on resolved IPs), redirects/sizes/times are capped, and content
+is dispatched on sniffed bytes, never on the server's Content-Type header.
+
 ## Status
 
-Phases 0–1 (init, doctor, lint, snapshot/undo/history, query) are built and
-tested against a real 989-note production vault. Next up: pull-based
-ingesters (email, RSS, URL clipping) with per-record acknowledgement — the
-interfaces are already frozen in `internal/ingest`. See `docs/PLAN.md` and
-`docs/SPEC.md`.
+Phases 0–2 (init, doctor, lint, snapshot/undo/history, query, ingest) are
+built and tested against a real 989-note production vault. Next up: media
+handlers (PDF, audio/video asset notes) on the phase-2 dispatch, then the
+agent layer. See `docs/PLAN.md` and `docs/SPEC.md`.
 
 ## Development
 
