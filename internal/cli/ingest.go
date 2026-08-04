@@ -17,7 +17,9 @@ import (
 	"github.com/rdegges/pkms/internal/profile"
 )
 
-const noIngestersHelp = `%w for vault %q.
+const noIngestersHelp = `%w for vault %q.` + noIngestersHelpBody
+
+const noIngestersHelpBody = `
 
 Add one to your config:
 
@@ -219,7 +221,7 @@ func runIngestPull(cmd *cobra.Command, jsonOut bool, source string) error {
 	// A whole sweep where no vault had any ingesters is a misconfiguration,
 	// not a silent success — show the help and exit 2 (SPEC §19).
 	if !ranAny {
-		return fmt.Errorf(noIngestersHelp, errNoSources, "any configured vault")
+		return fmt.Errorf("%w in any configured vault.%s", errNoSources, noIngestersHelpBody)
 	}
 
 	if jsonOut {

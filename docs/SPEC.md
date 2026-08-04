@@ -957,7 +957,13 @@ security lens + codex). Frozen docs get amendments, never silent drift.
     (red-team + security lens); their findings were triaged into §28. A
     fully-blind hermetic cycle (Codex authors tests from the frozen spec
     without seeing the impl) was not run for phase 2.
-16. **Network-source e2e.** §27's URL/RSS/IMAP happy-path e2e scripts can't
+16. **Feed decode bound.** §21 names "feed decode" among the parse calls
+    under the deadline. `gofeed.Parse` runs without an explicit timeout: it
+    is a streaming pull parser fed a reader already capped at 15 MiB, and
+    the measured worst case (100k items in a 10 MB feed) is sub-second. The
+    byte cap is the accepted control here; `ConvertHTML` (per-item HTML→md)
+    still carries the timeout.
+17. **Network-source e2e.** §27's URL/RSS/IMAP happy-path e2e scripts can't
     run as specced: the SSRF guard (correctly) refuses the loopback address
     a local httptest fixture binds, and pkms ships no test-only bypass (that
     would be a production security hole). Those paths are covered by unit
