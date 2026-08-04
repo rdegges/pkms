@@ -12,6 +12,7 @@ import (
 	"github.com/rdegges/pkms/internal/config"
 	"github.com/rdegges/pkms/internal/fetch"
 	"github.com/rdegges/pkms/internal/ingest"
+	_ "github.com/rdegges/pkms/internal/ingest/rss" // registers "rss"
 	"github.com/rdegges/pkms/internal/profile"
 )
 
@@ -86,7 +87,7 @@ func runIngestPush(cmd *cobra.Command, jsonOut bool, arg string) error {
 	now := time.Now()
 	var rec ingest.Record
 	if strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://") {
-		rec, err = ingest.URLRecord(cmd.Context(), fetch.New(version), arg, noteType, now)
+		rec, err = ingest.URLRecord(cmd.Context(), fetch.New(), arg, noteType, now)
 	} else {
 		rec, err = ingest.FileRecord(arg, noteType, now)
 	}

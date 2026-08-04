@@ -18,12 +18,15 @@ import (
 
 // Result summarizes one source's run (SPEC §17 --json shape).
 type Result struct {
-	Source      string   `json:"source"`
-	New         int      `json:"new"`
-	Deduped     int      `json:"deduped"`
-	Quarantined int      `json:"quarantined"`
-	CursorReset bool     `json:"cursor_reset,omitempty"`
-	Notes       []string `json:"notes"`
+	Source      string `json:"source"`
+	New         int    `json:"new"`
+	Deduped     int    `json:"deduped"`
+	Quarantined int    `json:"quarantined"`
+	CursorReset bool   `json:"cursor_reset,omitempty"`
+	// Dropped counts records the ingester capped away this run — never a
+	// silent cap (SPEC §21); they re-surface on later runs.
+	Dropped int      `json:"dropped,omitempty"`
+	Notes   []string `json:"notes"`
 	// Existing lists the notes deduped records already live in, when known
 	// (powers push mode's "already ingested → <path>" copy).
 	Existing []string `json:"existing,omitempty"`
@@ -37,7 +40,11 @@ func (r *Result) Summary() string {
 	if r.AlreadyRunning {
 		return fmt.Sprintf("%s: already running", r.Source)
 	}
-	return fmt.Sprintf("%s: %d new, %d deduped, %d quarantined", r.Source, r.New, r.Deduped, r.Quarantined)
+	s := fmt.Sprintf("%s: %d new, %d deduped, %d quarantined", r.Source, r.New, r.Deduped, r.Quarantined)
+	if r.Dropped > 0 {
+		s += fmt.Sprintf(" (%d over the per-run cap, retried next run)", r.Dropped)
+	}
+	return s
 }
 
 // CursorResetter lets an ingester report that it discarded its resume
@@ -45,6 +52,17 @@ func (r *Result) Summary() string {
 // has no slot for it, so the pipeline checks for this interface after Fetch.
 type CursorResetter interface {
 	CursorWasReset() bool
+}
+
+// noteTypeDefaulter receives the profile's [ingest] clip type when the
+// ingester's config declared no note_type override (SPEC §18).
+type noteTypeDefaulter interface {
+	SetNoteType(string)
+}
+
+// dropReporter surfaces per-run caps so they are never silent (SPEC §21).
+type dropReporter interface {
+	DroppedItems() int
 }
 
 // Runner executes configured ingesters for one vault (SPEC §17).
@@ -89,6 +107,9 @@ func (r *Runner) RunSource(ctx context.Context, ic config.IngesterConfig) (*Resu
 	ing, err := factory(ic.Options)
 	if err != nil {
 		return &Result{Source: ic.Source(), Notes: []string{}}, fmt.Errorf("ingester %s: %w", ic.Source(), err)
+	}
+	if d, ok := ing.(noteTypeDefaulter); ok {
+		d.SetNoteType(r.Profile.Ingest.Clip)
 	}
 	return r.run(ctx, ic, ing)
 }
@@ -146,6 +167,9 @@ func (r *Runner) run(ctx context.Context, ic config.IngesterConfig, ing Ingester
 		if rec.NaturalKey == "" {
 			return fmt.Errorf("ingester %s emitted a record with an empty NaturalKey (ingester bug)", ic.Source())
 		}
+		if rec.NoteType == "" {
+			return fmt.Errorf(`ingester %s emitted a record with no note type; set note_type on the ingester or [ingest] clip in the profile`, ic.Source())
+		}
 		if st.Seen(rec.NaturalKey) {
 			res.Deduped++
 			if p := st.NotePath(rec.NaturalKey); p != "" {
@@ -200,6 +224,9 @@ func (r *Runner) run(ctx context.Context, ic config.IngesterConfig, ing Ingester
 	fetchErr := ing.Fetch(ctx, cursor, emit)
 	if cr, ok := ing.(CursorResetter); ok && cr.CursorWasReset() {
 		res.CursorReset = true
+	}
+	if dr, ok := ing.(dropReporter); ok {
+		res.Dropped = dr.DroppedItems()
 	}
 
 	// Notes written before a failure are durable and acked — commit them

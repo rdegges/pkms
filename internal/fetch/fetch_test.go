@@ -37,14 +37,14 @@ func TestGetRefusesLoopback(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer srv.Close()
 
-	_, err := New("test").Get(context.Background(), srv.URL, MaxHTMLBody, nil)
+	_, err := New().Get(context.Background(), srv.URL, MaxHTMLBody, nil)
 	require.ErrorContains(t, err, "private address")
 }
 
 // testClient disables only the SSRF dial check so httptest (loopback)
 // works; every other control (redirects, ports, caps) stays identical.
 func testClient() *Client {
-	c := New("test")
+	c := New()
 	tr := c.http.Transport.(*http.Transport)
 	tr.DialContext = nil // default dialer, no Control hook
 	return c

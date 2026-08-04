@@ -92,14 +92,18 @@ type Result struct {
 	StatusCode int
 }
 
+// Version is stamped into the User-Agent; the CLI sets it from its build
+// version at startup (ingesters construct clients without seeing it).
+var Version = "dev"
+
 // Client wraps the hardened http.Client. Zero value is not usable — New().
 type Client struct {
 	http      *http.Client
 	userAgent string
 }
 
-// New builds the hardened client. version goes into the User-Agent.
-func New(version string) *Client {
+// New builds the hardened client.
+func New() *Client {
 	dialer := &net.Dialer{Timeout: connectTimeout, Control: ssrfControl}
 	transport := &http.Transport{
 		DialContext:       dialer.DialContext,
@@ -117,7 +121,7 @@ func New(version string) *Client {
 				return checkURL(req.URL, via[0].URL)
 			},
 		},
-		userAgent: fmt.Sprintf("pkms/%s (+https://github.com/rdegges/pkms)", version),
+		userAgent: fmt.Sprintf("pkms/%s (+https://github.com/rdegges/pkms)", Version),
 	}
 }
 
