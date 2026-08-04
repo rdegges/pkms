@@ -1,10 +1,12 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -106,6 +108,18 @@ func runDoctor(cmd *cobra.Command, jsonOut bool) error {
 		} else {
 			ok("quarantine", v.Name, "empty")
 		}
+
+		// Per-source ingest state files parse and carry a supported
+		// version (SPEC §26).
+		for _, ic := range v.Sources {
+			name := "ingest-state (" + ic.Source() + ")"
+			switch detail, err := checkStateFile(v.Name, ic); {
+			case err != nil:
+				fail(name, v.Name, err.Error())
+			default:
+				ok(name, v.Name, detail)
+			}
+		}
 	}
 
 	if stale := staleLocks(paths.StateDir("locks")); len(stale) > 0 {
@@ -173,6 +187,34 @@ func countFiles(dir string) int {
 		return nil
 	})
 	return n
+}
+
+// checkStateFile validates a source's NDJSON ledger header without taking
+// its lock (doctor must not contend with a running ingest).
+func checkStateFile(vaultName string, ic config.IngesterConfig) (string, error) {
+	p := paths.StateDir("state", vaultName, strings.ReplaceAll(ic.Source(), ":", "-")+".ndjson")
+	f, err := os.Open(p)
+	if os.IsNotExist(err) {
+		return "no runs yet", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	sc := bufio.NewScanner(f)
+	if !sc.Scan() {
+		return "empty", nil
+	}
+	var header struct {
+		V int `json:"v"`
+	}
+	if err := json.Unmarshal(sc.Bytes(), &header); err != nil {
+		return "", fmt.Errorf("%s: header does not parse: %v", p, err)
+	}
+	if header.V != 1 {
+		return "", fmt.Errorf("%s: state version %d is not supported by this pkms; upgrade pkms", p, header.V)
+	}
+	return "ok", nil
 }
 
 func staleLocks(dir string) []string {
