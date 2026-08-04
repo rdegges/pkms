@@ -14,7 +14,7 @@ var now = time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
 func TestAckSeenPersistence(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "imap-work.ndjson")
 
-	s, err := OpenState(p, "imap:work")
+	s, err := OpenState(p, "imap:work", "imap/1")
 	require.NoError(t, err)
 	require.False(t, s.Seen("<msg-1@example.com>"))
 
@@ -25,7 +25,7 @@ func TestAckSeenPersistence(t *testing.T) {
 	require.NoError(t, s.Close())
 
 	// Reopen: acks, quarantines and cursor survive (crash recovery = this).
-	s2, err := OpenState(p, "imap:work")
+	s2, err := OpenState(p, "imap:work", "imap/1")
 	require.NoError(t, err)
 	defer func() { _ = s2.Close() }()
 	require.True(t, s2.Seen("<msg-1@example.com>"), "acked records dedup after restart")
@@ -36,10 +36,10 @@ func TestAckSeenPersistence(t *testing.T) {
 
 func TestHeaderWrittenOnce(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.ndjson")
-	s, err := OpenState(p, "rss:blog")
+	s, err := OpenState(p, "rss:blog", "rss/1")
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
-	s, err = OpenState(p, "rss:blog")
+	s, err = OpenState(p, "rss:blog", "rss/1")
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
@@ -60,7 +60,7 @@ func countLines(b []byte) int {
 
 func TestCompaction(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.ndjson")
-	s, err := OpenState(p, "imap:work")
+	s, err := OpenState(p, "imap:work", "imap/1")
 	require.NoError(t, err)
 	// A long-lived source accumulates far more cursor lines than keys.
 	require.NoError(t, s.Ack("<keep-1@example.com>", "n.md", now))
@@ -70,7 +70,7 @@ func TestCompaction(t *testing.T) {
 	}
 	require.NoError(t, s.Close())
 
-	s2, err := OpenState(p, "imap:work")
+	s2, err := OpenState(p, "imap:work", "imap/1")
 	require.NoError(t, err)
 	defer func() { _ = s2.Close() }()
 	require.Less(t, s2.lines, 10, "log compacted to header + acks + cursor")
@@ -83,7 +83,7 @@ func TestCompaction(t *testing.T) {
 // record re-fetches and dedups (codex finding).
 func TestTornTailRecovers(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.ndjson")
-	s, err := OpenState(p, "imap:work")
+	s, err := OpenState(p, "imap:work", "imap/1")
 	require.NoError(t, err)
 	require.NoError(t, s.Ack("<ok@example.com>", "n.md", now))
 	require.NoError(t, s.Close())
@@ -94,7 +94,7 @@ func TestTornTailRecovers(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
 
-	s2, err := OpenState(p, "imap:work")
+	s2, err := OpenState(p, "imap:work", "imap/1")
 	require.NoError(t, err, "torn tail is recoverable, not fatal")
 	defer func() { _ = s2.Close() }()
 	require.True(t, s2.Seen("<ok@example.com>"), "durable acks survive")
@@ -105,11 +105,11 @@ func TestTornTailRecovers(t *testing.T) {
 // rather than double-ingesting (codex finding).
 func TestStateStoreLocked(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.ndjson")
-	s, err := OpenState(p, "imap:work")
+	s, err := OpenState(p, "imap:work", "imap/1")
 	require.NoError(t, err)
 	defer func() { _ = s.Close() }()
 
-	_, err = OpenState(p, "imap:work")
+	_, err = OpenState(p, "imap:work", "imap/1")
 	require.Error(t, err, "second concurrent open is refused")
 }
 

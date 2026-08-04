@@ -20,8 +20,9 @@ import (
 // a crash between write and ack re-fetches the record and dedup makes the
 // retry a no-op — never duplicates, never loses.
 type StateStore struct {
-	path   string
-	source string
+	path         string
+	source       string
+	cursorSchema string
 
 	f    *os.File
 	lock *lock.Lock
@@ -62,7 +63,10 @@ func Key(naturalKey string) string {
 // OpenState opens (creating if needed) the state file for one source and
 // takes an exclusive per-source flock: two concurrent ingest runs would
 // each see Seen()==false and both write the note (SPEC §7 locks).
-func OpenState(path, source string) (*StateStore, error) {
+// cursorSchema (e.g. "imap/1") is stamped into a freshly-created header so
+// a future cursor-format bump is detectable (SPEC §7); "" for cursor-less
+// sources.
+func OpenState(path, source, cursorSchema string) (*StateStore, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, err
 	}
@@ -70,7 +74,7 @@ func OpenState(path, source string) (*StateStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &StateStore{path: path, source: source, seen: map[string]string{}, lock: l}
+	s := &StateStore{path: path, source: source, cursorSchema: cursorSchema, seen: map[string]string{}, lock: l}
 	if err := s.load(); err != nil {
 		_ = l.Release()
 		return nil, err
@@ -89,7 +93,7 @@ func OpenState(path, source string) (*StateStore, error) {
 	}
 	s.f = f
 	if s.lines == 0 {
-		if err := s.append(stateLine{V: 1, Source: source}); err != nil {
+		if err := s.append(stateLine{V: 1, Source: source, CursorSchema: cursorSchema}); err != nil {
 			_ = f.Close()
 			_ = l.Release()
 			return nil, err
@@ -128,8 +132,11 @@ func (s *StateStore) load() error {
 	if err := sc.Err(); err != nil {
 		return err
 	}
-	for _, l := range pending {
+	for i, l := range pending {
 		s.lines++
+		if i == 0 && l.CursorSchema != "" {
+			s.cursorSchema = l.CursorSchema // preserve across compaction
+		}
 		switch l.Op {
 		case "ack", "quarantine":
 			s.seen[l.K] = l.Note
@@ -139,6 +146,9 @@ func (s *StateStore) load() error {
 	}
 	return nil
 }
+
+// CursorSchema returns the schema recorded in the file header ("" if none).
+func (s *StateStore) CursorSchema() string { return s.cursorSchema }
 
 // Seen reports whether a natural key was already acked or quarantined.
 func (s *StateStore) Seen(naturalKey string) bool {
@@ -209,7 +219,7 @@ func (s *StateStore) compact() error {
 	defer func() { _ = os.Remove(tmp.Name()) }()
 	w := bufio.NewWriter(tmp)
 	enc := json.NewEncoder(w)
-	if err := enc.Encode(stateLine{V: 1, Source: s.source}); err != nil {
+	if err := enc.Encode(stateLine{V: 1, Source: s.source, CursorSchema: s.cursorSchema}); err != nil {
 		return err
 	}
 	lines := 1

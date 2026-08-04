@@ -62,10 +62,12 @@ type IngesterConfig struct {
 }
 
 // Source is the state/lock identity, e.g. "imap:fastmail" (SPEC §18).
-// The push pipeline's synthetic adhoc source collapses to plain "adhoc".
+// The push pipeline's synthetic adhoc source collapses to plain "adhoc";
+// every real configured source keeps its <type>:<name> form even when a
+// user happens to name it the same as its type.
 func (ic IngesterConfig) Source() string {
-	if ic.Type == ic.Name {
-		return ic.Type
+	if ic.Type == "adhoc" {
+		return "adhoc"
 	}
 	return ic.Type + ":" + ic.Name
 }

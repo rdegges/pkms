@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/goccy/go-yaml"
@@ -33,17 +34,17 @@ func Write(vaultRoot string, prof *profile.Profile, noteType string,
 
 	if sch := prof.Schema(noteType); sch != nil {
 		if err := sch.Validate(fields); err != nil {
-			qPath, qErr := quarantine(quarantineDir, keyHash, noteType, fields, body, err, now)
-			if qErr != nil {
-				return "", fmt.Errorf("schema validation failed AND quarantine failed: %v / %w", err, qErr)
-			}
-			return "", fmt.Errorf("%w: %s (%v)", ErrQuarantined, qPath, err)
+			return quarantineReject(quarantineDir, keyHash, noteType, fields, body, err, now)
 		}
 	}
 
+	// A record whose validated fields still can't render a legal path
+	// (bad template output, a title that sanitizes to empty) is a
+	// deterministic REJECT, not a pipeline failure: quarantine it so the
+	// batch continues and it is never retried (SPEC §17 step 5e).
 	folder, filename, err := prof.RenderPath(noteType, fields)
 	if err != nil {
-		return "", err
+		return quarantineReject(quarantineDir, keyHash, noteType, fields, body, err, now)
 	}
 
 	destDir := filepath.Join(vaultRoot, filepath.FromSlash(folder))
@@ -75,10 +76,24 @@ func Write(vaultRoot string, prof *profile.Profile, noteType string,
 
 	content, err := renderNote(prof, noteType, fields, body)
 	if err != nil {
+		// A hostile string value the YAML emitter can't round-trip
+		// (e.g. a title of "? x" that reparses to zero fields, or ".inf"
+		// that reparses as a number) is a property of the record —
+		// quarantine it rather than write silently-corrupt frontmatter
+		// (SPEC §6 round-trip invariant).
+		if errors.Is(err, errFrontmatterRoundTrip) {
+			return quarantineReject(quarantineDir, keyHash, noteType, fields, body, err, now)
+		}
 		return "", err
 	}
 	abs, err := vault.CreateNewNote(destDir, filename, content)
 	if err != nil {
+		// ENAMETOOLONG is a property of the record (a pathological title),
+		// not the environment — quarantine so it never wedges the batch.
+		// Genuine IO failures (ENOSPC, EACCES) still propagate and abort.
+		if errors.Is(err, syscall.ENAMETOOLONG) {
+			return quarantineReject(quarantineDir, keyHash, noteType, fields, body, err, now)
+		}
 		return "", err
 	}
 	rel, err := filepath.Rel(vaultRoot, abs)
@@ -86,6 +101,17 @@ func Write(vaultRoot string, prof *profile.Profile, noteType string,
 		return "", err
 	}
 	return filepath.ToSlash(rel), nil
+}
+
+// quarantineReject writes the rejected record to the quarantine dir and
+// returns ErrQuarantined wrapping the reason; used for every
+// record-deterministic rejection (schema, path render, filename length).
+func quarantineReject(dir, keyHash, noteType string, fields map[string]any, body string, reason error, now time.Time) (string, error) {
+	qPath, qErr := quarantine(dir, keyHash, noteType, fields, body, reason, now)
+	if qErr != nil {
+		return "", fmt.Errorf("record rejected (%v) AND quarantine failed: %w", reason, qErr)
+	}
+	return "", fmt.Errorf("%w: %s (%v)", ErrQuarantined, qPath, reason)
 }
 
 func confined(root, dir string) error {
@@ -119,6 +145,9 @@ func renderNote(prof *profile.Profile, noteType string, fields map[string]any, b
 	if err != nil {
 		return nil, err
 	}
+	if err := verifyRoundTrip(fields, fm); err != nil {
+		return nil, err
+	}
 	var out strings.Builder
 	out.WriteString("---\n")
 	out.Write(fm)
@@ -131,6 +160,36 @@ func renderNote(prof *profile.Profile, noteType string, fields map[string]any, b
 		out.WriteString("\n")
 	}
 	return []byte(out.String()), nil
+}
+
+// errFrontmatterRoundTrip marks a record whose marshaled frontmatter does
+// not parse back to the same fields (a YAML-emitter edge case on a hostile
+// value); the record is quarantined, never written.
+var errFrontmatterRoundTrip = errors.New("frontmatter does not round-trip")
+
+// verifyRoundTrip reparses the marshaled frontmatter and confirms every
+// input field survives with an equal value (SPEC §6). This is the backstop
+// against emitter gaps — a title of "? x" that reparses to no fields, an
+// ".inf"/".nan" that reparses as a number, a tab that is silently dropped.
+func verifyRoundTrip(fields map[string]any, fm []byte) error {
+	var got map[string]any
+	if err := yaml.Unmarshal(fm, &got); err != nil {
+		return fmt.Errorf("%w: reparse failed (%v)", errFrontmatterRoundTrip, err)
+	}
+	for k, v := range fields {
+		gv, ok := got[k]
+		if !ok {
+			return fmt.Errorf("%w: field %q vanished on reparse", errFrontmatterRoundTrip, k)
+		}
+		// Strings are the injection surface; compare them exactly. Other
+		// scalar/list types are trusted (schema-validated, pkms-built).
+		if s, isStr := v.(string); isStr {
+			if gs, ok := gv.(string); !ok || gs != s {
+				return fmt.Errorf("%w: field %q changed on reparse (%q → %v)", errFrontmatterRoundTrip, k, s, gv)
+			}
+		}
+	}
+	return nil
 }
 
 func quarantine(dir, keyHash, noteType string, fields map[string]any, body string, verr error, now time.Time) (string, error) {

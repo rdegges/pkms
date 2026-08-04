@@ -59,12 +59,31 @@ var deniedPrefixes = []netip.Prefix{
 // DeniedAddr reports whether pkms refuses to connect to ip.
 func DeniedAddr(ip netip.Addr) bool {
 	ip = ip.Unmap() // ::ffff:169.254.169.254 must be checked as v4
+	// IPv4-compatible IPv6 (::/96, deprecated): the classic bypass family
+	// that Unmap doesn't cover — re-check the embedded v4.
+	if ip.Is6() {
+		if b := ip.As16(); allZero(b[:12]) && !(b[12] == 0 && b[13] == 0 && b[14] == 0 && b[15] <= 1) {
+			v4 := netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
+			if DeniedAddr(v4) {
+				return true
+			}
+		}
+	}
 	for _, p := range deniedPrefixes {
 		if p.Contains(ip) {
 			return true
 		}
 	}
 	return false
+}
+
+func allZero(b []byte) bool {
+	for _, x := range b {
+		if x != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // ssrfControl runs post-DNS-resolution, pre-connect — the only stdlib hook

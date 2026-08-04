@@ -107,6 +107,9 @@ func New(cfg map[string]any) (*IMAP, error) {
 
 func (m *IMAP) Name() string { return "imap" }
 
+// CursorSchema is the on-disk cursor format tag (SPEC §7/§23).
+func (m *IMAP) CursorSchema() string { return "imap/1" }
+
 // SetNoteType is the pipeline's profile-default hook.
 func (m *IMAP) SetNoteType(t string) {
 	if m.cfg.NoteType == "" {
@@ -256,7 +259,7 @@ func (m *IMAP) accessToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w\n(run `pkms auth %s` once to authorize and store the refresh token)", err, m.cfg.SourceName)
 	}
-	return refreshAccessToken(ctx, m.cfg.TokenURL, clientID, clientSecret, refresh)
+	return refreshAccessToken(ctx, m.cfg.TokenURL, clientID, clientSecret, refresh, m.cfg.SourceName)
 }
 
 // xoauth2String builds the SASL initial response (SPEC §24).

@@ -2,6 +2,7 @@ package imap
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -301,4 +302,39 @@ func TestRegisteredInRegistry(t *testing.T) {
 	f, err := ingest.Lookup("imap")
 	require.NoError(t, err)
 	require.NotNil(t, f)
+}
+
+func TestRecordSkipsDeeplyNestedMultipart(t *testing.T) {
+	// A deeply-nested multipart message must be skipped without descending
+	// the tree (the parse is quadratic) — headers still recorded.
+	var b strings.Builder
+	b.WriteString("Message-Id: <deep@x>\r\nFrom: a@example.com\r\n")
+	b.WriteString("Date: Mon, 03 Aug 2026 08:00:00 +0000\r\nSubject: Deep\r\n")
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&b, "Content-Type: multipart/mixed; boundary=b%d\r\n\r\n--b%d\r\n", i, i)
+	}
+	b.WriteString("Content-Type: text/plain\r\n\r\nnever reached\r\n")
+
+	m := newTestIMAP(t, nil)
+	rec, err := m.record([]byte(b.String()), internalDate)
+	require.NoError(t, err)
+	require.Equal(t, "deep@x", rec.NaturalKey, "headers still captured")
+	require.Contains(t, rec.Body, "nested MIME parts exceed the safe limit")
+}
+
+func TestSanitizeAttachmentNameNeutralizesMarkup(t *testing.T) {
+	// The security property is what matters: no wikilink/embed/code/table
+	// markup, no leading embed marker, no path separators or "..".
+	for _, in := range []string{"![[secret.png]]", "[[Now]]", "../../etc/x", "a`code`b", "a|b"} {
+		got := sanitizeAttachmentName(in)
+		require.NotContains(t, got, "[", "input %q → %q", in, got)
+		require.NotContains(t, got, "]", "input %q → %q", in, got)
+		require.NotContains(t, got, "`", "input %q → %q", in, got)
+		require.NotContains(t, got, "|", "input %q → %q", in, got)
+		require.NotContains(t, got, "/", "input %q → %q", in, got)
+		require.NotContains(t, got, "..", "input %q → %q", in, got)
+		require.False(t, strings.HasPrefix(got, "!"), "input %q → %q", in, got)
+	}
+	// Exact for the embed case: no `!`, no `[[`.
+	require.Equal(t, "--secret.png--", sanitizeAttachmentName("![[secret.png]]"))
 }

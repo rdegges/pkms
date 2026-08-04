@@ -32,14 +32,17 @@ const (
 
 // Sniff classifies content by its bytes (SPEC §20): DetectContentType over
 // the first 512 bytes; the Content-Type header is never trusted for
-// dispatch. XHTML served with an XML declaration sniffs as text/xml, so
-// xml/plain bodies that clearly carry an <html element dispatch as HTML.
+// dispatch. text/plain is stored VERBATIM (SPEC §20 table) — only XHTML
+// served as text/xml, which carries an <html root, is routed to the HTML
+// pipeline.
 func Sniff(body []byte) (Kind, string) {
 	sniffed := http.DetectContentType(body)
 	switch {
 	case strings.HasPrefix(sniffed, "text/html"):
 		return KindHTML, sniffed
-	case strings.HasPrefix(sniffed, "text/xml"), strings.HasPrefix(sniffed, "text/plain"):
+	case strings.HasPrefix(sniffed, "text/plain"):
+		return KindText, sniffed
+	case strings.HasPrefix(sniffed, "text/xml"):
 		probe := body
 		if len(probe) > 4096 {
 			probe = probe[:4096]
@@ -47,37 +50,57 @@ func Sniff(body []byte) (Kind, string) {
 		if bytes.Contains(bytes.ToLower(probe), []byte("<html")) {
 			return KindHTML, sniffed
 		}
-		if strings.HasPrefix(sniffed, "text/plain") {
-			return KindText, sniffed
-		}
 		return KindUnsupported, sniffed
 	default:
 		return KindUnsupported, sniffed
 	}
 }
 
+// parseTimeout bounds one document's extraction+conversion (SPEC §21): the
+// byte caps make a pathological spin unlikely, but a deadline turns any
+// residual catastrophic-regex case into a clean error instead of a hang.
+const parseTimeout = 20 * time.Second
+
 // HTMLToMarkdown converts one fetched HTML document: charset-decode to
 // UTF-8 (html-to-markdown does no charset handling), readability
-// extraction, then markdown. Returns the extracted title ("" when the
-// document has none).
+// extraction, then markdown, all under parseTimeout. Returns the extracted
+// title ("" when the document has none).
 func HTMLToMarkdown(body []byte, contentTypeHeader string, base *url.URL) (title, md string, err error) {
-	utf8r, err := charset.NewReader(bytes.NewReader(body), contentTypeHeader)
-	if err != nil {
-		return "", "", fmt.Errorf("decode charset: %w", err)
+	type result struct {
+		title, md string
+		err       error
 	}
-	art, err := readability.FromReader(utf8r, base)
-	if err != nil {
-		return "", "", fmt.Errorf("extract article: %w", err)
+	done := make(chan result, 1)
+	go func() {
+		utf8r, err := charset.NewReader(bytes.NewReader(body), contentTypeHeader)
+		if err != nil {
+			done <- result{err: fmt.Errorf("decode charset: %w", err)}
+			return
+		}
+		art, err := readability.FromReader(utf8r, base)
+		if err != nil {
+			done <- result{err: fmt.Errorf("extract article: %w", err)}
+			return
+		}
+		var buf bytes.Buffer
+		if err := art.RenderHTML(&buf); err != nil {
+			done <- result{err: fmt.Errorf("render article: %w", err)}
+			return
+		}
+		m, err := htmltomarkdown.ConvertString(buf.String())
+		if err != nil {
+			done <- result{err: fmt.Errorf("convert to markdown: %w", err)}
+			return
+		}
+		done <- result{title: strings.TrimSpace(art.Title()), md: strings.TrimSpace(m) + "\n"}
+	}()
+
+	select {
+	case r := <-done:
+		return r.title, r.md, r.err
+	case <-time.After(parseTimeout):
+		return "", "", fmt.Errorf("HTML conversion exceeded %s (document too complex)", parseTimeout)
 	}
-	var buf bytes.Buffer
-	if err := art.RenderHTML(&buf); err != nil {
-		return "", "", fmt.Errorf("render article: %w", err)
-	}
-	md, err = htmltomarkdown.ConvertString(buf.String())
-	if err != nil {
-		return "", "", fmt.Errorf("convert to markdown: %w", err)
-	}
-	return strings.TrimSpace(art.Title()), strings.TrimSpace(md) + "\n", nil
 }
 
 // CanonicalURL normalizes a URL into its dedup NaturalKey form (SPEC §20):
@@ -159,8 +182,11 @@ func FileRecord(path, noteType string, now time.Time) (Record, error) {
 		return Record{}, err
 	}
 	fi, err := os.Stat(abs)
-	if err != nil {
+	if os.IsNotExist(err) {
 		return Record{}, fmt.Errorf("%q is not an http(s) URL and not an existing file", path)
+	}
+	if err != nil {
+		return Record{}, fmt.Errorf("stat %s: %w", abs, err)
 	}
 	if !fi.Mode().IsRegular() {
 		return Record{}, fmt.Errorf("%s is not a regular file", abs)

@@ -118,8 +118,8 @@ func TestFetchRecords(t *testing.T) {
 	require.Equal(t, "HTTPS://Example.com:443/two#frag", recs[1].Fields["source"], "source stays verbatim")
 	require.Equal(t, "2026-08-03T12:00:00Z", recs[1].Fields["created"], "missing date → fetch time")
 
-	// No GUID, no link → deterministic hash key; stub body.
-	require.True(t, strings.HasPrefix(recs[2].NaturalKey, "rss-item:"), recs[2].NaturalKey)
+	// No GUID, no link → deterministic bare-hex hash key (SPEC §22); stub body.
+	require.Len(t, recs[2].NaturalKey, 64, recs[2].NaturalKey)
 	require.Contains(t, recs[2].Body, "no content for this item")
 	require.Equal(t, "https://example.com/feed.xml", recs[2].Fields["source"], "fallback to feed URL")
 }

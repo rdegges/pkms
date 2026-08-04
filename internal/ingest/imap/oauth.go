@@ -15,7 +15,7 @@ import (
 
 // refreshAccessToken exchanges a stored refresh token for a short-lived
 // access token (SPEC §24: refreshed every run, never persisted).
-func refreshAccessToken(ctx context.Context, tokenURL, clientID, clientSecret, refreshToken string) (string, error) {
+func refreshAccessToken(ctx context.Context, tokenURL, clientID, clientSecret, refreshToken, sourceName string) (string, error) {
 	form := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
@@ -49,7 +49,7 @@ func refreshAccessToken(ctx context.Context, tokenURL, clientID, clientSecret, r
 		return "", fmt.Errorf("refresh OAuth token: HTTP %d with unparseable body", resp.StatusCode)
 	}
 	if tok.AccessToken == "" {
-		return "", fmt.Errorf("refresh OAuth token failed: %s %s (a 7-day expiry means the OAuth consent screen is still in Testing mode — see docs/OAUTH-GMAIL.md; re-run `pkms auth` after fixing it)", tok.Error, tok.ErrorDesc)
+		return "", fmt.Errorf("refresh OAuth token failed: %s %s (a token dead after ~7 days means the OAuth consent screen is still in Testing mode — see docs/OAUTH-GMAIL.md; re-run `pkms auth %s` after fixing it)", tok.Error, tok.ErrorDesc, sourceName)
 	}
 	return tok.AccessToken, nil
 }

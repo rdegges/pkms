@@ -3,7 +3,6 @@ package imap
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -33,7 +32,7 @@ func Authorize(ctx context.Context, cfgTable map[string]any, vaultName, sourceNa
 		return err
 	}
 	if m.cfg.Auth != "xoauth2" {
-		return fmt.Errorf(`ingester %q uses auth = %q; pkms auth is only for auth = "xoauth2" sources`, sourceName, m.cfg.Auth)
+		return fmt.Errorf(`ingester %q uses auth = %q; pkms auth is only for auth = "xoauth2" sources — set auth = "xoauth2" on its [[vaults.ingesters]] entry first`, sourceName, m.cfg.Auth)
 	}
 	source := "imap:" + sourceName
 
@@ -58,12 +57,12 @@ func Authorize(ctx context.Context, cfgTable map[string]any, vaultName, sourceNa
 Waiting for the redirect on %s (5-minute timeout)…
 `, m.cfg.Username, authURL, redirectURI)
 
-	code, err := waitForCode(ctx, ln)
+	code, err := waitForCode(ctx, ln, sourceName)
 	if err != nil {
 		return err
 	}
 
-	refresh, err := exchangeCode(ctx, m.cfg.TokenURL, clientID, clientSecret, code, redirectURI)
+	refresh, err := exchangeCode(ctx, m.cfg.TokenURL, clientID, clientSecret, code, redirectURI, sourceName)
 	if err != nil {
 		return err
 	}
@@ -117,7 +116,7 @@ func buildAuthURL(authURL, clientID, redirectURI string) string {
 }
 
 // waitForCode serves exactly one loopback request and extracts ?code=.
-func waitForCode(ctx context.Context, ln net.Listener) (string, error) {
+func waitForCode(ctx context.Context, ln net.Listener, sourceName string) (string, error) {
 	type result struct {
 		code string
 		err  error
@@ -127,7 +126,11 @@ func waitForCode(ctx context.Context, ln net.Listener) (string, error) {
 		code := r.URL.Query().Get("code")
 		if code == "" {
 			http.Error(w, "missing ?code parameter", http.StatusBadRequest)
-			ch <- result{err: fmt.Errorf("authorization failed: %s", r.URL.Query().Get("error"))}
+			reason := r.URL.Query().Get("error")
+			if reason == "" {
+				reason = "unknown error"
+			}
+			ch <- result{err: fmt.Errorf("authorization was not granted (%s); re-run `pkms auth %s` and approve access in the browser", reason, sourceName)}
 			return
 		}
 		fmt.Fprintln(w, "pkms is authorized — you can close this tab.")
@@ -142,12 +145,12 @@ func waitForCode(ctx context.Context, ln net.Listener) (string, error) {
 	case r := <-ch:
 		return r.code, r.err
 	case <-ctx.Done():
-		return "", errors.New("timed out waiting for the OAuth redirect; re-run `pkms auth` and complete the browser flow within 5 minutes")
+		return "", fmt.Errorf("timed out waiting for the OAuth redirect; re-run `pkms auth %s` and complete the browser flow within 5 minutes", sourceName)
 	}
 }
 
 // exchangeCode trades the authorization code for a refresh token.
-func exchangeCode(ctx context.Context, tokenURL, clientID, clientSecret, code, redirectURI string) (string, error) {
+func exchangeCode(ctx context.Context, tokenURL, clientID, clientSecret, code, redirectURI, sourceName string) (string, error) {
 	form := url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
@@ -178,7 +181,7 @@ func exchangeCode(ctx context.Context, tokenURL, clientID, clientSecret, code, r
 		return "", fmt.Errorf("exchange authorization code: HTTP %d with unparseable body", resp.StatusCode)
 	}
 	if tok.RefreshToken == "" {
-		return "", fmt.Errorf("no refresh token in the response (%s %s); ensure access_type=offline was granted and try again", tok.Error, tok.ErrorDesc)
+		return "", fmt.Errorf("no refresh token in the response (%s %s); re-run `pkms auth %s` and approve access again in the browser", tok.Error, tok.ErrorDesc, sourceName)
 	}
 	return tok.RefreshToken, nil
 }

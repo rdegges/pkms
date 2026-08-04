@@ -82,6 +82,16 @@ pkms auth gmail
 - pkms receives the redirect, exchanges the code, and stores the refresh
   token in the keyring. Nothing secret ever touches config.toml.
 
+The browser must run on the **same machine as pkms** — the redirect goes to
+`127.0.0.1:<port>` on the pkms host. Over SSH, forward that port
+(`ssh -L`), or run `pkms auth` on your desktop and copy the config there.
+
+On a **headless box with no OS keyring**, `pkms auth` can't store the token.
+Run it on a machine with a keyring, or skip `pkms auth` entirely and supply
+the three secrets as env vars: `PKMS_<VAULT>_<NAME>_OAUTH_CLIENT_ID`,
+`_OAUTH_CLIENT_SECRET`, and `_OAUTH_REFRESH_TOKEN` (obtain the refresh token
+once on a desktop).
+
 ### 6. Verify
 
 ```

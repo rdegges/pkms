@@ -24,7 +24,8 @@ func TestResolveOrder(t *testing.T) {
 	require.Equal(t, "from-keyring", got)
 
 	// Env when the keyring has nothing.
-	require.NoError(t, Delete("v", "imap:s", Password))
+	_, err = Delete("v", "imap:s", Password)
+	require.NoError(t, err)
 	got, err = Resolve("v", "imap:s", "s", Password, nil)
 	require.NoError(t, err)
 	require.Equal(t, "from-env", got)

@@ -70,6 +70,9 @@ func New(cfg map[string]any) (ingest.Ingester, error) {
 
 func (r *RSS) Name() string { return "rss" }
 
+// CursorSchema is the on-disk cursor format tag (SPEC §7/§22).
+func (r *RSS) CursorSchema() string { return "rss/1" }
+
 // SetNoteType is the pipeline's profile-default hook: config note_type
 // wins, else the profile's [ingest] clip type.
 func (r *RSS) SetNoteType(t string) {
@@ -122,12 +125,17 @@ func (r *RSS) Fetch(ctx context.Context, cursor ingest.Cursor, emit ingest.EmitF
 		}
 	}
 
-	// Conditional-GET cursor from the final response.
-	if etag := res.Header.Get("ETag"); etag != "" {
-		cursor["etag"] = etag
-	}
-	if lm := res.Header.Get("Last-Modified"); lm != "" {
-		cursor["last_modified"] = lm
+	// Conditional-GET cursor from the final response — but NOT when items
+	// were dropped this run: a 304 next time would starve the overflow
+	// forever. Leaving the cursor unadvanced forces a full re-fetch so the
+	// dropped items actually get ingested (SPEC §22).
+	if r.dropped == 0 {
+		if etag := res.Header.Get("ETag"); etag != "" {
+			cursor["etag"] = etag
+		}
+		if lm := res.Header.Get("Last-Modified"); lm != "" {
+			cursor["last_modified"] = lm
+		}
 	}
 	return nil
 }
@@ -193,7 +201,7 @@ func naturalKey(feedURL string, it *gofeed.Item) string {
 		}
 	}
 	sum := sha256.Sum256([]byte(feedURL + "\x00" + it.Title + "\x00" + it.Published))
-	return "rss-item:" + hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:])
 }
 
 func authorNames(it *gofeed.Item) string {

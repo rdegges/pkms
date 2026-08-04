@@ -78,26 +78,45 @@ func Store(vaultName, source string, kind Kind, value string) error {
 	return keyring.Set(Service, Account(vaultName, source, kind), value)
 }
 
-// Delete removes a secret from the OS keyring.
-func Delete(vaultName, source string, kind Kind) error {
-	err := keyring.Delete(Service, Account(vaultName, source, kind))
+// Delete removes a secret from the OS keyring. existed is false when there
+// was nothing stored (a no-op, still nil error — rm is idempotent).
+func Delete(vaultName, source string, kind Kind) (existed bool, err error) {
+	err = keyring.Delete(Service, Account(vaultName, source, kind))
 	if errors.Is(err, keyring.ErrNotFound) {
-		return nil
+		return false, nil
 	}
-	return err
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // runPasswordCmd executes the argv array directly — never a shell (SPEC
-// §14) — and returns the first line of stdout.
+// §14) — and returns the first line of stdout. The child inherits the
+// environment with every PKMS_* var scrubbed, so a password helper can't
+// read one source's secret while resolving another's.
 func runPasswordCmd(argv []string) (string, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stderr = os.Stderr
+	cmd.Env = scrubbedEnv()
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
 	}
 	line, _, _ := strings.Cut(string(out), "\n")
 	return strings.TrimSpace(line), nil
+}
+
+func scrubbedEnv() []string {
+	src := os.Environ()
+	out := make([]string, 0, len(src))
+	for _, kv := range src {
+		if strings.HasPrefix(kv, "PKMS_") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // ParseKind validates a CLI-supplied kind name.

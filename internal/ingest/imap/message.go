@@ -25,6 +25,13 @@ const (
 	maxPartBytes = fetch.MaxHTMLBody
 	// fallbackBodyPrefix feeds the no-Message-ID hash key (SPEC §23).
 	fallbackBodyPrefix = 2 << 10
+	// maxParts bounds a hostile many-part message (SPEC §23), enforced as a
+	// flat part-count ceiling on what walkParts processes.
+	maxParts = 100
+	// maxMultipartHeaders bounds MIME nesting BEFORE go-message parses it.
+	// Deeply-nested multipart is quadratic inside a single NextPart() call,
+	// so a part-count loop cap can't stop it — this raw-byte scan can.
+	maxMultipartHeaders = 100
 )
 
 type attachment struct {
@@ -70,6 +77,20 @@ func (m *IMAP) record(raw []byte, internalDate time.Time) (ingest.Record, error)
 	}
 	if to := addressList(h, "To"); len(to) > 0 {
 		fields["to"] = to
+	}
+
+	// Guard MIME nesting on the raw bytes BEFORE walking: a deeply-nested
+	// multipart message is quadratic inside go-message's first NextPart,
+	// so refuse to descend it at all. Header fields above are cheap and
+	// already captured, so the note still lands (acked, never re-fetched)
+	// with a body noting the skip — no wedge, no DoS (SPEC §23).
+	if n := bytes.Count(bytes.ToLower(raw), []byte("multipart/")); n > maxMultipartHeaders {
+		return ingest.Record{
+			NaturalKey: key,
+			NoteType:   m.cfg.NoteType,
+			Fields:     fields,
+			Body:       fmt.Sprintf("(message skipped: %d nested MIME parts exceed the safe limit; the headers above were still recorded)\n", n),
+		}, nil
 	}
 
 	htmlPart, textPart, atts, err := walkParts(mr)
@@ -119,7 +140,12 @@ func (m *IMAP) record(raw []byte, internalDate time.Time) (ingest.Record, error)
 // every attachment's name. go-message decodes charsets to UTF-8 as it
 // reads; per-part bytes are capped (SPEC §21).
 func walkParts(mr *mail.Reader) (htmlPart, textPart string, atts []attachment, err error) {
+	parts := 0
 	for {
+		if parts >= maxParts {
+			break // hostile part-count ceiling (SPEC §23)
+		}
+		parts++
 		p, err := mr.NextPart()
 		if err == io.EOF {
 			break
@@ -159,18 +185,26 @@ func readCapped(r io.Reader) string {
 	return string(b)
 }
 
-// sanitizeAttachmentName neutralizes traversal/markdown tricks in remote
-// filenames before they land in note bodies (SPEC §21).
+// sanitizeAttachmentName neutralizes traversal AND markdown/wikilink tricks
+// in remote filenames before they land in note bodies (SPEC §21). A sender
+// must not be able to smuggle `![[secret.png]]` (an Obsidian embed that
+// renders arbitrary vault content) or `[[Note]]` (a fabricated graph edge)
+// through an attachment filename.
 func sanitizeAttachmentName(name string) string {
 	name = strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
+		switch {
+		case r < 0x20 || r == 0x7f:
 			return -1
+		case strings.ContainsRune("[]`|", r):
+			return '-' // wikilink/embed/table/code markup
+		default:
+			return r
 		}
-		return r
 	}, name)
 	name = strings.ReplaceAll(name, "/", "-")
 	name = strings.ReplaceAll(name, "\\", "-")
 	name = strings.ReplaceAll(name, "..", "-")
+	name = strings.TrimLeft(name, "!") // no leading embed marker
 	if len(name) > 255 {
 		name = name[:255]
 	}

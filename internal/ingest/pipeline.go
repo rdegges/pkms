@@ -65,6 +65,12 @@ type dropReporter interface {
 	DroppedItems() int
 }
 
+// cursorSchemaProvider lets a cursor-bearing ingester declare its cursor
+// format (e.g. "imap/1") so the state header records it (SPEC §7).
+type cursorSchemaProvider interface {
+	CursorSchema() string
+}
+
 // identitySetter receives the vault/source identity ingesters need for
 // keyring secret lookups (SPEC §24).
 type identitySetter interface {
@@ -147,9 +153,13 @@ func (r *Runner) run(ctx context.Context, ic config.IngesterConfig, ing Ingester
 		}
 	}
 
+	cursorSchema := ""
+	if csp, ok := ing.(cursorSchemaProvider); ok {
+		cursorSchema = csp.CursorSchema()
+	}
 	fileStem := strings.ReplaceAll(ic.Source(), ":", "-")
 	statePath := paths.StateDir("state", r.Vault.Name, fileStem+".ndjson")
-	st, err := OpenState(statePath, ic.Source())
+	st, err := OpenState(statePath, ic.Source(), cursorSchema)
 	if err != nil {
 		var held lock.ErrHeld
 		if errors.As(err, &held) {
@@ -238,21 +248,22 @@ func (r *Runner) run(ctx context.Context, ic config.IngesterConfig, ing Ingester
 		res.Dropped = dr.DroppedItems()
 	}
 
-	// Notes written before a failure are durable and acked — commit them
-	// either way. The cursor is only persisted after a clean Fetch: on
-	// error the next run resumes from the old cursor and dedup no-ops
+	// Commit the acked notes FIRST — they are durable, so a later cursor
+	// or commit hiccup must never leave them uncommitted (undo depends on
+	// the op journal). The cursor is only persisted after a clean Fetch:
+	// on error the next run resumes from the old cursor and dedup no-ops
 	// the overlap (SPEC §17 step 6).
-	if fetchErr == nil && len(cursor) > 0 {
-		if err := st.SetCursor(cursor, r.Now()); err != nil {
-			return res, err
-		}
-	}
 	if res.New == 0 {
 		if err := op.Discard(); err != nil {
 			return res, err
 		}
 	} else if err := op.End(res.Summary()); err != nil {
 		return res, err
+	}
+	if fetchErr == nil && len(cursor) > 0 {
+		if err := st.SetCursor(cursor, r.Now()); err != nil {
+			return res, err
+		}
 	}
 	if fetchErr != nil {
 		return res, fmt.Errorf("ingester %s: %w", ic.Source(), fetchErr)

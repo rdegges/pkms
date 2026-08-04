@@ -307,7 +307,7 @@ func TestRunSourceCursorResetReported(t *testing.T) {
 func openTestState(t *testing.T, r *Runner) *StateStore {
 	t.Helper()
 	p := filepath.Join(os.Getenv("XDG_STATE_HOME"), "pkms", "state", r.Vault.Name, "fake-one.ndjson")
-	st, err := OpenState(p, "fake:one")
+	st, err := OpenState(p, "fake:one", "")
 	require.NoError(t, err)
 	return st
 }

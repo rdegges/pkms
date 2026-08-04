@@ -290,15 +290,27 @@ func (p *Profile) RenderPath(typeName string, fields map[string]any) (folder, fi
 	if strings.Contains(filename, "/") {
 		return "", "", fmt.Errorf("type %q filename rendered a path separator: %q", typeName, filename)
 	}
+	if filename == "" {
+		return "", "", fmt.Errorf("type %q filename rendered empty after sanitizing", typeName)
+	}
 	return folder, filename, nil
 }
 
+// maxFilenameBytes bounds a rendered basename well under the common 255-byte
+// filesystem limit (room for the " N.md" collision suffix); a pathological
+// title truncates to a valid note instead of failing the write.
+const maxFilenameBytes = 180
+
 // sanitizeFilename replaces the characters the vault forbids in basenames
 // (lint filename-safe-chars; SPEC §26) — remote titles are hostile input
-// and must never smuggle separators or wikilink syntax into paths.
+// and must never smuggle separators or wikilink syntax into paths — and
+// bounds the length so an overlong title can't blow the filesystem limit.
 func sanitizeFilename(name string) string {
 	var b strings.Builder
 	for _, r := range name {
+		if b.Len() >= maxFilenameBytes {
+			break
+		}
 		switch {
 		case r < 0x20 || r == 0x7f:
 			// drop control chars

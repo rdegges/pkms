@@ -881,3 +881,71 @@ html-to-markdown does no charset handling and no sanitization;
 - Binding phase exit (plan): scheduled email ingest runs a week with zero
   duplicate notes — cron setup happens only after explicit go-ahead, on the
   real vault, after merge.
+
+## 28. Phase-2 amendments (post-review, 2026-08-03)
+
+Documented deviations found during the multi-lens review (red-team +
+security lens + codex). Frozen docs get amendments, never silent drift.
+
+1. **Source-lock co-location.** §2 lists locks under `locks/<vault>[.<source>]`.
+   Per-source ingest locks instead live beside their state file at
+   `state/<vault>/<source>.ndjson.lock` so the lock and its ledger share a
+   directory and lifetime; the per-vault lock stays at `locks/<vault>.lock`.
+   flocks die with the process, so a stale source-lock FILE is always
+   immediately re-lockable.
+2. **Pull-mode output.** §17's `--json` shape is per-vault; the multi-vault
+   cron sweep emits a JSON **array** of `{"vault","sources":[…]}` (one entry
+   per vault), and push mode emits a single such object. Human pull output
+   prefixes each line with the vault name (`<vault>: <source>: N new …`) to
+   disambiguate the all-vaults run; the `Result.Summary()` string itself is
+   the frozen `<source>: N new, M deduped, Q quarantined`.
+3. **Ingester-type validation timing.** Unknown `type` is rejected at run
+   time (the registry is populated by package `init()`s the config package
+   can't import without a cycle), not at config load. Config load still
+   validates the table shape, names, and uniqueness.
+4. **One bad source never blocks the sweep.** A source whose run errors
+   (e.g. a missing credential) is reported to stderr and skipped; remaining
+   sources and vaults still run; the command exits 2. An explicitly targeted
+   `--source`, or a single-vault run, still fails loudly and immediately.
+   Mirrors §9's "push failure is a warning, never blocks".
+5. **MIME-nesting guard.** §23's "multipart walk capped at depth 10" is
+   enforced as (a) a raw-bytes ceiling of 100 `multipart/` headers checked
+   BEFORE go-message descends the tree (deep nesting is quadratic inside a
+   single `NextPart`, so a post-parse depth counter can't help), and (b) a
+   flat 100-part processing cap in the walker. An over-nested message is
+   recorded from its headers with a skip note in the body — acked, never
+   re-fetched, never a hang.
+6. **IMAP whole-message cap.** Each raw message is streamed under a 25 MiB
+   ceiling (not buffered whole); an oversized message is skipped and its UID
+   still advances the cursor. Complements §21's per-part 10 MiB cap.
+7. **Frontmatter round-trip is enforced at write time.** §6 declares
+   round-trip a test invariant; the writer now also checks it at runtime and
+   quarantines any record whose marshaled frontmatter doesn't reparse to the
+   same fields (a hostile title like `? x` that the YAML emitter renders as a
+   plain scalar reparsing to zero fields). Prevents silently-corrupt notes.
+8. **Filename length + emptiness.** Rendered basenames are capped at 180
+   bytes (room for the ` N.md` collision suffix under the 255-byte FS limit)
+   and a title that sanitizes to empty is quarantined — a pathological title
+   truncates or quarantines, never wedges the batch (§17 step 5e).
+9. **Attachment-name neutralization.** Beyond traversal, the IMAP attachment
+   listing strips wikilink/embed/code/table markup (`[ ] ` `` ` `` `|`, leading
+   `!`) so a sender can't smuggle `![[secret.png]]` into a note body.
+10. **RSS cap + conditional GET.** When the per-run item cap drops items, the
+    ETag/Last-Modified cursor is NOT advanced, so the next run re-fetches
+    instead of 304-ing and starving the overflow.
+11. **Cursor-schema header.** The state header carries `cursor_schema`
+    (`imap/1`, `rss/1`; empty for cursor-less sources); doctor rejects an
+    unknown schema (§26). RSS's no-GUID/no-link fallback key is the bare
+    `sha256(feedURL\x00title\x00published)` hex (§22), no prefix.
+12. **SSRF: IPv4-compatible IPv6.** The deny check also unwraps the
+    deprecated `::/96` IPv4-compatible form and re-checks the embedded v4,
+    alongside the v4-mapped/NAT64/6to4 handling already specified in §21.
+13. **Network-source e2e.** §27's URL/RSS/IMAP happy-path e2e scripts can't
+    run as specced: the SSRF guard (correctly) refuses the loopback address
+    a local httptest fixture binds, and pkms ships no test-only bypass (that
+    would be a production security hole). Those paths are covered by unit
+    tests with injected transports/connections (`fetch`, `ingest/adhoc`,
+    `ingest/rss`, `ingest/imap`) plus the local-file push e2e, which
+    exercises the full fetch→convert→write→dedup→commit pipeline through the
+    binary. Crash-recovery and run-twice idempotence are unit-tested in
+    `internal/ingest` (the pipeline crash matrix and rerun no-op tests).

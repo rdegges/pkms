@@ -18,8 +18,9 @@ func newSecretCmd() *cobra.Command {
 		Use:   "secret",
 		Short: "Store or remove ingester credentials in the OS keyring",
 		Long: `Secrets never live in config.toml. pkms looks them up in this order:
-OS keyring → PKMS_<VAULT>_<SOURCE>_<KIND> env var → password_cmd (argv
-array, password kind only). This command manages the keyring entries.`,
+OS keyring → PKMS_<VAULT>_<NAME>_<KIND> env var (NAME is the ingester's
+name, upper-cased, with - and : turned into _) → password_cmd (argv array,
+password kind only). This command manages the keyring entries.`,
 	}
 	cmd.AddCommand(newSecretSetCmd(), newSecretRmCmd())
 	return cmd
@@ -66,11 +67,15 @@ Kinds: password, oauth-client-id, oauth-client-secret, oauth-refresh-token.`,
 				return err
 			}
 			if value == "" {
-				return fmt.Errorf("empty secret; nothing stored")
+				return fmt.Errorf("empty secret; nothing stored — re-run and enter a non-empty value (or pipe it on stdin)")
 			}
 			if err := secrets.Store(v.Name, ic.Source(), kind, value); err != nil {
-				return fmt.Errorf("store in the OS keyring: %w (headless? use the $%s env var or password_cmd instead)",
-					err, secrets.EnvVar(v.Name, ic.Name, kind))
+				hint := ""
+				if kind == secrets.Password {
+					hint = " or password_cmd"
+				}
+				return fmt.Errorf("store in the OS keyring: %w (headless? use the $%s env var%s instead)",
+					err, secrets.EnvVar(v.Name, ic.Name, kind), hint)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "stored %s for %s (keyring account %q)\n",
 				kind, ic.Source(), secrets.Account(v.Name, ic.Source(), kind))
@@ -94,8 +99,13 @@ func newSecretRmCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := secrets.Delete(v.Name, ic.Source(), kind); err != nil {
+			existed, err := secrets.Delete(v.Name, ic.Source(), kind)
+			if err != nil {
 				return err
+			}
+			if !existed {
+				fmt.Fprintf(cmd.OutOrStdout(), "no %s stored for %s (nothing to remove)\n", kind, ic.Source())
+				return nil
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "removed %s for %s\n", kind, ic.Source())
 			return nil
@@ -145,7 +155,7 @@ keyring. See docs/OAUTH-GMAIL.md for the full Gmail walkthrough.`,
 				return err
 			}
 			if ic.Type != "imap" {
-				return fmt.Errorf("ingester %q has type %q; pkms auth is for imap sources with auth = \"xoauth2\"", ic.Name, ic.Type)
+				return fmt.Errorf("ingester %q has type %q; pkms auth is only for imap sources with auth = \"xoauth2\"", ic.Name, ic.Type)
 			}
 			return imap.Authorize(cmd.Context(), ic.Options, v.Name, ic.Name, cmd.InOrStdin(), cmd.OutOrStdout())
 		},
