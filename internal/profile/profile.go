@@ -10,6 +10,7 @@ import (
 	"path"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
 	toml "github.com/pelletier/go-toml/v2"
@@ -31,8 +32,16 @@ type Manifest struct {
 	RootFiles   []string `toml:"root_files"`
 	Types       []Type   `toml:"types"`
 	Indexes     []Index  `toml:"indexes"`
+	// Ingest names the note types the ingest pipeline targets (SPEC §26).
+	Ingest IngestTypes `toml:"ingest"`
 	// Lint holds per-rule config, interpreted by each rule's factory.
 	Lint map[string]map[string]any `toml:"lint"`
+}
+
+// IngestTypes maps ingest record kinds to profile note types.
+type IngestTypes struct {
+	// Clip is the note type for ingested clips (URLs, feeds, email).
+	Clip string `toml:"clip"`
 }
 
 // Type declares one note type. Order matters: classification returns the
@@ -220,6 +229,9 @@ var pathTemplateFuncs = template.FuncMap{
 	"year":  func(date string) string { return part(date, 0) },
 	"month": func(date string) string { return part(date, 1) },
 	"day":   func(date string) string { return part(date, 2) },
+	// tsname renders an RFC3339 timestamp (or bare date) as a filename-safe
+	// stamp matching the clip-processed-filename convention (SPEC §26).
+	"tsname": tsname,
 	"slug": func(s string) string {
 		s = strings.ToLower(strings.TrimSpace(s))
 		var b strings.Builder
@@ -236,6 +248,16 @@ var pathTemplateFuncs = template.FuncMap{
 		}
 		return strings.Trim(b.String(), "-")
 	},
+}
+
+func tsname(ts string) string {
+	if t, err := time.Parse(time.RFC3339, ts); err == nil {
+		return t.Format("2006-01-02T150405-0700")
+	}
+	if t, err := time.Parse("2006-01-02", ts); err == nil {
+		return t.Format("2006-01-02T150405+0000")
+	}
+	return ts // schema validation already vetted the field; pass through
 }
 
 func part(date string, i int) string {
@@ -264,10 +286,29 @@ func (p *Profile) RenderPath(typeName string, fields map[string]any) (folder, fi
 	if err != nil {
 		return "", "", fmt.Errorf("type %q filename: %w", typeName, err)
 	}
+	filename = sanitizeFilename(filename)
 	if strings.Contains(filename, "/") {
 		return "", "", fmt.Errorf("type %q filename rendered a path separator: %q", typeName, filename)
 	}
 	return folder, filename, nil
+}
+
+// sanitizeFilename replaces the characters the vault forbids in basenames
+// (lint filename-safe-chars; SPEC §26) — remote titles are hostile input
+// and must never smuggle separators or wikilink syntax into paths.
+func sanitizeFilename(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r < 0x20 || r == 0x7f:
+			// drop control chars
+		case strings.ContainsRune(`/\#|[]^:`, r):
+			b.WriteByte('-')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func renderConfined(tmpl string, fields map[string]any) (string, error) {

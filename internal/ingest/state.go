@@ -23,9 +23,11 @@ type StateStore struct {
 	path   string
 	source string
 
-	f      *os.File
-	lock   *lock.Lock
-	seen   map[string]bool // sha256(NaturalKey) hex -> acked or quarantined
+	f    *os.File
+	lock *lock.Lock
+	// seen maps sha256(NaturalKey) hex -> note path for acks ("" for
+	// quarantines); key presence alone means "never ingest again".
+	seen   map[string]string
 	cursor Cursor
 	lines  int
 	// tornTail is true when the log ended in a partial line (crash during
@@ -68,7 +70,7 @@ func OpenState(path, source string) (*StateStore, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := &StateStore{path: path, source: source, seen: map[string]bool{}, lock: l}
+	s := &StateStore{path: path, source: source, seen: map[string]string{}, lock: l}
 	if err := s.load(); err != nil {
 		_ = l.Release()
 		return nil, err
@@ -130,7 +132,7 @@ func (s *StateStore) load() error {
 		s.lines++
 		switch l.Op {
 		case "ack", "quarantine":
-			s.seen[l.K] = true
+			s.seen[l.K] = l.Note
 		case "cursor":
 			s.cursor = l.Data
 		}
@@ -140,6 +142,13 @@ func (s *StateStore) load() error {
 
 // Seen reports whether a natural key was already acked or quarantined.
 func (s *StateStore) Seen(naturalKey string) bool {
+	_, ok := s.seen[Key(naturalKey)]
+	return ok
+}
+
+// NotePath returns the vault-relative note path acked for the key
+// ("" for quarantined or unknown keys).
+func (s *StateStore) NotePath(naturalKey string) string {
 	return s.seen[Key(naturalKey)]
 }
 
@@ -149,7 +158,7 @@ func (s *StateStore) Ack(naturalKey, notePath string, now time.Time) error {
 	if err := s.append(stateLine{Op: "ack", K: k, Note: notePath, TS: now.UTC().Format(time.RFC3339)}); err != nil {
 		return err
 	}
-	s.seen[k] = true
+	s.seen[k] = notePath
 	return nil
 }
 
@@ -159,7 +168,7 @@ func (s *StateStore) Quarantine(naturalKey, reason string, now time.Time) error 
 	if err := s.append(stateLine{Op: "quarantine", K: k, Reason: reason, TS: now.UTC().Format(time.RFC3339)}); err != nil {
 		return err
 	}
-	s.seen[k] = true
+	s.seen[k] = ""
 	return nil
 }
 
@@ -204,8 +213,9 @@ func (s *StateStore) compact() error {
 		return err
 	}
 	lines := 1
-	for k := range s.seen {
-		if err := enc.Encode(stateLine{Op: "ack", K: k}); err != nil {
+	for k, note := range s.seen {
+		// Note paths survive compaction — push-mode dedup copy needs them.
+		if err := enc.Encode(stateLine{Op: "ack", K: k, Note: note}); err != nil {
 			return err
 		}
 		lines++

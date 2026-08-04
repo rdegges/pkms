@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/rdegges/pkms/internal/config"
@@ -23,6 +24,9 @@ type Result struct {
 	Quarantined int      `json:"quarantined"`
 	CursorReset bool     `json:"cursor_reset,omitempty"`
 	Notes       []string `json:"notes"`
+	// Existing lists the notes deduped records already live in, when known
+	// (powers push mode's "already ingested → <path>" copy).
+	Existing []string `json:"existing,omitempty"`
 
 	// AlreadyRunning: another run holds the source lock (clean exit 0).
 	AlreadyRunning bool `json:"-"`
@@ -78,6 +82,34 @@ func (r *Runner) LoadSourceIDs() error {
 // pre/post snapshot commits, per-record dedup → write → ack ordering, and
 // cursor persistence on clean completion only.
 func (r *Runner) RunSource(ctx context.Context, ic config.IngesterConfig) (*Result, error) {
+	factory, err := Lookup(ic.Type)
+	if err != nil {
+		return &Result{Source: ic.Source(), Notes: []string{}}, err
+	}
+	ing, err := factory(ic.Options)
+	if err != nil {
+		return &Result{Source: ic.Source(), Notes: []string{}}, fmt.Errorf("ingester %s: %w", ic.Source(), err)
+	}
+	return r.run(ctx, ic, ing)
+}
+
+// oneShot replays exactly one pre-built record (push mode, SPEC §19).
+type oneShot struct{ rec Record }
+
+func (o oneShot) Name() string { return "adhoc" }
+func (o oneShot) Fetch(ctx context.Context, _ Cursor, emit EmitFunc) error {
+	return emit(ctx, o.rec)
+}
+
+// RunPush runs one record through the full pipeline under the shared
+// "adhoc" source, so repeated pushes of the same URL/file dedup.
+func (r *Runner) RunPush(ctx context.Context, rec Record) (*Result, error) {
+	ic := config.IngesterConfig{Type: "adhoc", Name: "adhoc", Enabled: true,
+		Timeout: config.DefaultSourceTimeout, Options: map[string]any{}}
+	return r.run(ctx, ic, oneShot{rec: rec})
+}
+
+func (r *Runner) run(ctx context.Context, ic config.IngesterConfig, ing Ingester) (*Result, error) {
 	res := &Result{Source: ic.Source(), Notes: []string{}}
 	if r.sourceIDs == nil {
 		if err := r.LoadSourceIDs(); err != nil {
@@ -85,16 +117,8 @@ func (r *Runner) RunSource(ctx context.Context, ic config.IngesterConfig) (*Resu
 		}
 	}
 
-	factory, err := Lookup(ic.Type)
-	if err != nil {
-		return res, err
-	}
-	ing, err := factory(ic.Options)
-	if err != nil {
-		return res, fmt.Errorf("ingester %s: %w", ic.Source(), err)
-	}
-
-	statePath := paths.StateDir("state", r.Vault.Name, ic.Type+"-"+ic.Name+".ndjson")
+	fileStem := strings.ReplaceAll(ic.Source(), ":", "-")
+	statePath := paths.StateDir("state", r.Vault.Name, fileStem+".ndjson")
 	st, err := OpenState(statePath, ic.Source())
 	if err != nil {
 		var held lock.ErrHeld
@@ -111,7 +135,7 @@ func (r *Runner) RunSource(ctx context.Context, ic config.IngesterConfig) (*Resu
 		return res, err
 	}
 
-	quarantineDir := paths.StateDir("failed", r.Vault.Name, ic.Type+"-"+ic.Name)
+	quarantineDir := paths.StateDir("failed", r.Vault.Name, fileStem)
 	ctx, cancel := context.WithTimeout(ctx, ic.Timeout)
 	defer cancel()
 
@@ -124,6 +148,9 @@ func (r *Runner) RunSource(ctx context.Context, ic config.IngesterConfig) (*Resu
 		}
 		if st.Seen(rec.NaturalKey) {
 			res.Deduped++
+			if p := st.NotePath(rec.NaturalKey); p != "" {
+				res.Existing = append(res.Existing, p)
+			}
 			return nil
 		}
 		if existing, ok := r.sourceIDs[rec.NaturalKey]; ok {
@@ -133,6 +160,7 @@ func (r *Runner) RunSource(ctx context.Context, ic config.IngesterConfig) (*Resu
 				return err
 			}
 			res.Deduped++
+			res.Existing = append(res.Existing, existing)
 			return nil
 		}
 		if _, owned := rec.Fields["source_id"]; owned {

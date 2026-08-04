@@ -19,6 +19,9 @@ scaffold = [
 ]
 root_files = []
 
+[ingest]
+clip = "raw-clip" # ingested URLs/feeds/email land in Resources/Clips/Inbox
+
 # ---- Note types (order matters: content-triggered types precede fallbacks) --
 
 [[types]]
@@ -85,6 +88,8 @@ schema = "schemas/session-trace.schema.json"
 name = "raw-clip"
 scope = ["Resources/Clips/Inbox/*.md", "Resources/Clips/Processed/*.md"]
 schema = "schemas/raw-clip.schema.json"
+folder = "Resources/Clips/Inbox"
+filename = "{{tsname .created}} - {{.title}}"
 
 [[types]]
 name = "clip-summary"

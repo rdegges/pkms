@@ -62,10 +62,16 @@ type IngesterConfig struct {
 }
 
 // Source is the state/lock identity, e.g. "imap:fastmail" (SPEC §18).
-func (ic IngesterConfig) Source() string { return ic.Type + ":" + ic.Name }
+// The push pipeline's synthetic adhoc source collapses to plain "adhoc".
+func (ic IngesterConfig) Source() string {
+	if ic.Type == ic.Name {
+		return ic.Type
+	}
+	return ic.Type + ":" + ic.Name
+}
 
-// defaultSourceTimeout bounds one source's run (SPEC §17).
-const defaultSourceTimeout = 10 * time.Minute
+// DefaultSourceTimeout bounds one source's run (SPEC §17).
+const DefaultSourceTimeout = 10 * time.Minute
 
 type Snapshot struct {
 	Remote string `koanf:"remote"`
@@ -136,7 +142,7 @@ func (c *Config) validate() error {
 func (v *Vault) validateIngesters() error {
 	names := map[string]bool{}
 	for i, raw := range v.Ingesters {
-		ic := IngesterConfig{Enabled: true, Timeout: defaultSourceTimeout, Options: map[string]any{}}
+		ic := IngesterConfig{Enabled: true, Timeout: DefaultSourceTimeout, Options: map[string]any{}}
 		for k, val := range raw {
 			switch k {
 			case "type":

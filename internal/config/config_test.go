@@ -185,7 +185,7 @@ profile = "para"
 
 	require.Equal(t, "rss:hn", srcs[0].Source())
 	require.True(t, srcs[0].Enabled)
-	require.Equal(t, defaultSourceTimeout, srcs[0].Timeout)
+	require.Equal(t, DefaultSourceTimeout, srcs[0].Timeout)
 	require.Equal(t, map[string]any{"url": "https://example.com/feed"}, srcs[0].Options)
 
 	require.False(t, srcs[1].Enabled)
