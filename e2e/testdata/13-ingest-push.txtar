@@ -1,16 +1,16 @@
-# Phase 13: push-mode ingest — a local HTML file lands in Inbox/ as a clip
+# Phase 13: push-mode ingest — a local HTML file lands in _Inbox/ as a clip
 # note, re-ingesting is a byte-identical no-op, hostile inputs are refused
 # with copy that says why and what happens instead.
 
 exec pkms init --path $WORK/vault
 
-# HTML file → readability → markdown clip note in Inbox/ (para profile).
+# HTML file → readability → markdown clip note in _Inbox/ (para profile).
 exec pkms ingest article.html
-stdout 'ingested → Inbox/.* - Interesting Article\.md'
+stdout 'ingested → _Inbox/.* - Interesting Article\.md'
 
 # Second push of identical content: content-addressed dedup, path shown.
 exec pkms ingest article.html
-stdout 'already ingested → Inbox/.* - Interesting Article\.md'
+stdout 'already ingested → _Inbox/.* - Interesting Article\.md'
 
 # The note carries the ingest contract fields.
 exec pkms query --type clip --json

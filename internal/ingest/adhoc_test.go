@@ -160,3 +160,13 @@ func TestFileRecordMissing(t *testing.T) {
 	_, err := FileRecord(filepath.Join(t.TempDir(), "nope.md"), "clip", testNow)
 	require.ErrorContains(t, err, "not an http(s) URL and not an existing file")
 }
+
+func TestConvertHTMLDoesNotEscapeURLUnderscores(t *testing.T) {
+	// Regression: smart-mode escaping turned utm_source into utm\_source,
+	// breaking links in ingested notes (reported on a real Reddit email).
+	md, err := ConvertHTML(`<p>See https://ex.com/whats_the_most/?utm_source=share&utm_medium=ios_app here</p>`)
+	require.NoError(t, err)
+	require.Contains(t, md, "utm_source=share")
+	require.Contains(t, md, "whats_the_most")
+	require.NotContains(t, md, `\_`, "no backslash-escaped underscores in the output")
+}
