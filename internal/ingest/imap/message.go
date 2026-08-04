@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/emersion/go-message/mail"
 
 	// Registers charset decoders so go-message transcodes non-UTF-8
@@ -101,7 +100,7 @@ func (m *IMAP) record(raw []byte, internalDate time.Time) (ingest.Record, error)
 	var body string
 	switch {
 	case htmlPart != "":
-		md, err := htmltomarkdown.ConvertString(htmlPart)
+		md, err := ingest.ConvertHTML(htmlPart)
 		if err != nil {
 			// Hostile HTML that breaks the converter still lands: fall
 			// back to the text part or a stub, never lose the message.

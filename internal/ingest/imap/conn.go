@@ -111,16 +111,12 @@ func (r *realConn) FetchSince(lowUID uint32, max int, fn func(uid uint32, raw []
 		if err != nil {
 			return err
 		}
+		// Always report the UID — even for an oversized (streamed under the
+		// cap, not buffered) or body-less message — with raw==nil signaling
+		// "skip". The caller advances its cursor past skipped UIDs so a
+		// too-big newest message can't tarpit every future run (SPEC §28.6).
 		if oversized {
-			// A pathological message can't blow memory: its body is
-			// streamed under the cap and skipped, not buffered whole
-			// (SPEC §21). The UID still counts so the cursor advances
-			// past it — a re-fetch would only re-skip.
-			n++
-			continue
-		}
-		if raw == nil {
-			continue // server sent no body for this message
+			raw = nil
 		}
 		if err := fn(uid, raw, internalDate); err != nil {
 			return err

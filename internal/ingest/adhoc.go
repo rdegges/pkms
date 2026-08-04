@@ -61,6 +61,30 @@ func Sniff(body []byte) (Kind, string) {
 // residual catastrophic-regex case into a clean error instead of a hang.
 const parseTimeout = 20 * time.Second
 
+// ConvertHTML turns an HTML fragment into markdown under parseTimeout. All
+// three ingesters (URL, RSS, IMAP) route their html-to-markdown conversion
+// through this so §21's parse-deadline promise holds everywhere, not just
+// in push mode. A stuck goroutine is bounded by the short-lived process.
+func ConvertHTML(html string) (string, error) {
+	done := make(chan struct {
+		md  string
+		err error
+	}, 1)
+	go func() {
+		md, err := htmltomarkdown.ConvertString(html)
+		done <- struct {
+			md  string
+			err error
+		}{md, err}
+	}()
+	select {
+	case r := <-done:
+		return r.md, r.err
+	case <-time.After(parseTimeout):
+		return "", fmt.Errorf("markdown conversion exceeded %s (content too complex)", parseTimeout)
+	}
+}
+
 // HTMLToMarkdown converts one fetched HTML document: charset-decode to
 // UTF-8 (html-to-markdown does no charset handling), readability
 // extraction, then markdown, all under parseTimeout. Returns the extracted
@@ -87,7 +111,7 @@ func HTMLToMarkdown(body []byte, contentTypeHeader string, base *url.URL) (title
 			done <- result{err: fmt.Errorf("render article: %w", err)}
 			return
 		}
-		m, err := htmltomarkdown.ConvertString(buf.String())
+		m, err := ConvertHTML(buf.String())
 		if err != nil {
 			done <- result{err: fmt.Errorf("convert to markdown: %w", err)}
 			return

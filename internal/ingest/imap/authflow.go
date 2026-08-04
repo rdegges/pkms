@@ -123,13 +123,15 @@ func waitForCode(ctx context.Context, ln net.Listener, sourceName string) (strin
 	}
 	ch := make(chan result, 1)
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		code := r.URL.Query().Get("code")
+		q := r.URL.Query()
+		code, reason := q.Get("code"), q.Get("error")
+		if code == "" && reason == "" {
+			// A stray probe/prefetch (favicon, etc.) must not end the flow.
+			http.Error(w, "waiting for the OAuth redirect…", http.StatusNotFound)
+			return
+		}
 		if code == "" {
-			http.Error(w, "missing ?code parameter", http.StatusBadRequest)
-			reason := r.URL.Query().Get("error")
-			if reason == "" {
-				reason = "unknown error"
-			}
+			http.Error(w, "authorization was not granted", http.StatusBadRequest)
 			ch <- result{err: fmt.Errorf("authorization was not granted (%s); re-run `pkms auth %s` and approve access in the browser", reason, sourceName)}
 			return
 		}

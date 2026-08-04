@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -165,9 +164,10 @@ func runIngestPull(cmd *cobra.Command, jsonOut bool, source string) error {
 	printf := func(format string, a ...any) { fmt.Fprintf(out, format, a...) }
 
 	var (
-		results     []vaultIngestResult
+		results     = []vaultIngestResult{} // never null in --json
 		quarantined int
-		failed      int // sources that errored — reported, never aborting
+		failed      int  // sources that errored — reported, never aborting
+		ranAny      bool // did any vault have ingesters to run?
 	)
 	for i := range vaults {
 		v := &vaults[i]
@@ -178,6 +178,7 @@ func runIngestPull(cmd *cobra.Command, jsonOut bool, source string) error {
 			}
 			return err
 		}
+		ranAny = true
 		prof, err := profile.Load(v.Profile)
 		if err != nil {
 			return err
@@ -187,7 +188,7 @@ func runIngestPull(cmd *cobra.Command, jsonOut bool, source string) error {
 		errf := func(format string, a ...any) { fmt.Fprintf(cmd.ErrOrStderr(), format, a...) }
 		lockErr := withVaultLock(v, printf, func() error {
 			for _, ic := range sources {
-				res, err := runner.RunSource(context.Background(), ic)
+				res, err := runner.RunSource(cmd.Context(), ic)
 				if err != nil {
 					// An explicitly targeted single source fails loudly and
 					// immediately. In the unattended sweep, one wedged
@@ -213,6 +214,12 @@ func runIngestPull(cmd *cobra.Command, jsonOut bool, source string) error {
 			return lockErr
 		}
 		results = append(results, vres)
+	}
+
+	// A whole sweep where no vault had any ingesters is a misconfiguration,
+	// not a silent success — show the help and exit 2 (SPEC §19).
+	if !ranAny {
+		return fmt.Errorf(noIngestersHelp, errNoSources, "any configured vault")
 	}
 
 	if jsonOut {

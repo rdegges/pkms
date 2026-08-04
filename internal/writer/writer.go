@@ -181,15 +181,38 @@ func verifyRoundTrip(fields map[string]any, fm []byte) error {
 		if !ok {
 			return fmt.Errorf("%w: field %q vanished on reparse", errFrontmatterRoundTrip, k)
 		}
-		// Strings are the injection surface; compare them exactly. Other
-		// scalar/list types are trusted (schema-validated, pkms-built).
-		if s, isStr := v.(string); isStr {
-			if gs, ok := gv.(string); !ok || gs != s {
-				return fmt.Errorf("%w: field %q changed on reparse (%q → %v)", errFrontmatterRoundTrip, k, s, gv)
-			}
+		// Compare every string, including those nested in lists (from/to on
+		// email records are attacker-controlled and carry the same emitter
+		// risk as a top-level title).
+		if !stringsRoundTrip(v, gv) {
+			return fmt.Errorf("%w: field %q changed on reparse (%v → %v)", errFrontmatterRoundTrip, k, v, gv)
 		}
 	}
 	return nil
+}
+
+// stringsRoundTrip checks that every string reachable in want survives
+// identically in got (non-string scalars are trusted — schema-validated
+// and pkms-built).
+func stringsRoundTrip(want, got any) bool {
+	switch w := want.(type) {
+	case string:
+		g, ok := got.(string)
+		return ok && g == w
+	case []any:
+		g, ok := got.([]any)
+		if !ok || len(g) != len(w) {
+			return false
+		}
+		for i := range w {
+			if !stringsRoundTrip(w[i], g[i]) {
+				return false
+			}
+		}
+		return true
+	default:
+		return true
+	}
 }
 
 func quarantine(dir, keyHash, noteType string, fields map[string]any, body string, verr error, now time.Time) (string, error) {

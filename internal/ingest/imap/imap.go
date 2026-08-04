@@ -154,17 +154,20 @@ func (m *IMAP) Fetch(ctx context.Context, cursor ingest.Cursor, emit ingest.Emit
 	// servers return the LAST message instead of an empty set (SPEC §23).
 	if uidNext == 0 || low < uint64(uidNext) {
 		err = conn.FetchSince(uint32(low), m.cfg.Batch, func(uid uint32, raw []byte, internalDate time.Time) error {
+			// Advance the cursor past every UID the server handed us, even
+			// a skipped one (nil raw = oversized or body-less), so it can
+			// never be re-fetched forever (SPEC §28.6).
+			if uint64(uid) > maxSeen {
+				maxSeen = uint64(uid)
+			}
+			if raw == nil {
+				return nil
+			}
 			rec, rerr := m.record(raw, internalDate)
 			if rerr != nil {
 				return fmt.Errorf("message uid %d: %w", uid, rerr)
 			}
-			if eerr := emit(ctx, rec); eerr != nil {
-				return eerr
-			}
-			if uint64(uid) > maxSeen {
-				maxSeen = uint64(uid)
-			}
-			return nil
+			return emit(ctx, rec)
 		})
 		if err != nil {
 			return err

@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/mmcdole/gofeed"
 
 	"github.com/rdegges/pkms/internal/fetch"
@@ -174,7 +173,7 @@ func (r *RSS) record(it *gofeed.Item, fetchTime time.Time) (ingest.Record, error
 	if strings.TrimSpace(html) == "" {
 		body = "(the feed provided no content for this item)\n"
 	} else {
-		md, err := htmltomarkdown.ConvertString(html)
+		md, err := ingest.ConvertHTML(html)
 		if err != nil {
 			return ingest.Record{}, fmt.Errorf("convert item %q: %w", title, err)
 		}

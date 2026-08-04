@@ -17,6 +17,7 @@ var internalDate = time.Date(2026, 8, 1, 9, 30, 0, 0, time.UTC)
 type fakeConn struct {
 	uidValidity, uidNext uint32
 	msgs                 map[uint32][]byte // uid -> raw
+	skip                 map[uint32]bool   // uid -> reported with nil raw
 	fetchedLow           uint32
 	fetchCalled          bool
 }
@@ -29,11 +30,15 @@ func (f *fakeConn) FetchSince(low uint32, max int, fn func(uint32, []byte, time.
 	f.fetchCalled = true
 	f.fetchedLow = low
 	n := 0
-	// UID order, as the protocol guarantees.
+	// UID order, as the protocol guarantees. A UID in skip is reported with
+	// nil raw, mirroring realConn's oversized/body-less skip.
 	for uid := low; uid < f.uidNext && n < max; uid++ {
 		raw, ok := f.msgs[uid]
-		if !ok {
+		if !ok && !f.skip[uid] {
 			continue
+		}
+		if f.skip[uid] {
+			raw = nil
 		}
 		if err := fn(uid, raw, internalDate); err != nil {
 			return err
@@ -337,4 +342,19 @@ func TestSanitizeAttachmentNameNeutralizesMarkup(t *testing.T) {
 	}
 	// Exact for the embed case: no `!`, no `[[`.
 	require.Equal(t, "--secret.png--", sanitizeAttachmentName("![[secret.png]]"))
+}
+
+func TestFetchAdvancesCursorPastSkippedMessage(t *testing.T) {
+	// An oversized/body-less message (nil raw) must still advance the
+	// cursor so it is never re-fetched forever (SPEC §28.6).
+	conn := &fakeConn{uidValidity: 7, uidNext: 4,
+		msgs: map[uint32][]byte{1: rawMsg("<a@x>", "One", "body"), 3: rawMsg("<c@x>", "Three", "body")},
+		skip: map[uint32]bool{2: true}, // UID 2 is oversized → nil raw
+	}
+	m := newTestIMAP(t, conn)
+	cursor := ingest.Cursor{}
+	recs := collect(t, m, cursor)
+
+	require.Len(t, recs, 2, "the two real messages emit; the skipped one does not")
+	require.Equal(t, uint64(3), cursor["last_uid"], "cursor advances past the skipped UID 2")
 }

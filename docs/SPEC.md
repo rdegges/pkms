@@ -941,7 +941,23 @@ security lens + codex). Frozen docs get amendments, never silent drift.
 12. **SSRF: IPv4-compatible IPv6.** The deny check also unwraps the
     deprecated `::/96` IPv4-compatible form and re-checks the embedded v4,
     alongside the v4-mapped/NAT64/6to4 handling already specified in §21.
-13. **Network-source e2e.** §27's URL/RSS/IMAP happy-path e2e scripts can't
+13. **Per-ingester `note_type` override.** Every ingester config accepts an
+    optional `note_type` key (SPEC §18) that overrides the profile's
+    `[ingest] clip` default for that source — useful when one vault files
+    feeds and email into different note types. Config `note_type` wins; the
+    profile default fills in otherwise.
+14. **`--json` extra fields.** The per-source object (§17) also carries
+    `dropped` (per-run cap overflow) and, for push, `existing` (the note a
+    deduped record already lives in). Additive to the §17 shape.
+15. **Cross-model test lens.** §27 names "hermetic tests (blind,
+    cross-model)". For phase 2 this was satisfied by scoped Codex
+    challenge/verify passes over every spec-able core (dedup keys, cursor
+    semantics, MIME dispatch, SSRF decisions, quarantine ordering, the
+    durability invariants) plus two independent fresh-context review agents
+    (red-team + security lens); their findings were triaged into §28. A
+    fully-blind hermetic cycle (Codex authors tests from the frozen spec
+    without seeing the impl) was not run for phase 2.
+16. **Network-source e2e.** §27's URL/RSS/IMAP happy-path e2e scripts can't
     run as specced: the SSRF guard (correctly) refuses the loopback address
     a local httptest fixture binds, and pkms ships no test-only bypass (that
     would be a production security hole). Those paths are covered by unit
