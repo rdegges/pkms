@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	toml "github.com/knadh/koanf/parsers/toml/v2"
 	"github.com/knadh/koanf/providers/file"
@@ -41,7 +42,30 @@ type Vault struct {
 	Snapshot Snapshot `koanf:"snapshot"`
 	// Per-vault lint overrides: rule id -> options ("enabled", "severity", ...).
 	Lint map[string]map[string]any `koanf:"lint"`
+	// Raw [[vaults.ingesters]] tables; validated into Sources.
+	Ingesters []map[string]any `koanf:"ingesters"`
+
+	// Sources is the validated form of Ingesters (not read from TOML).
+	Sources []IngesterConfig `koanf:"-"`
 }
+
+// IngesterConfig is one validated [[vaults.ingesters]] entry (SPEC §18).
+// Type, name, enabled and timeout are pipeline-reserved keys; everything
+// else stays in Options for the ingester factory, which must reject keys
+// it does not know (typo protection).
+type IngesterConfig struct {
+	Type    string
+	Name    string
+	Enabled bool
+	Timeout time.Duration
+	Options map[string]any
+}
+
+// Source is the state/lock identity, e.g. "imap:fastmail" (SPEC §18).
+func (ic IngesterConfig) Source() string { return ic.Type + ":" + ic.Name }
+
+// defaultSourceTimeout bounds one source's run (SPEC §17).
+const defaultSourceTimeout = 10 * time.Minute
 
 type Snapshot struct {
 	Remote string `koanf:"remote"`
@@ -101,6 +125,55 @@ func (c *Config) validate() error {
 		if v.Profile == "" {
 			return fmt.Errorf("vault %q: no profile set and no [defaults].profile", v.Name)
 		}
+
+		if err := v.validateIngesters(); err != nil {
+			return fmt.Errorf("vault %q: %w", v.Name, err)
+		}
+	}
+	return nil
+}
+
+func (v *Vault) validateIngesters() error {
+	names := map[string]bool{}
+	for i, raw := range v.Ingesters {
+		ic := IngesterConfig{Enabled: true, Timeout: defaultSourceTimeout, Options: map[string]any{}}
+		for k, val := range raw {
+			switch k {
+			case "type":
+				ic.Type, _ = val.(string)
+			case "name":
+				ic.Name, _ = val.(string)
+			case "enabled":
+				b, ok := val.(bool)
+				if !ok {
+					return fmt.Errorf("ingesters[%d]: enabled must be a boolean", i)
+				}
+				ic.Enabled = b
+			case "timeout":
+				s, ok := val.(string)
+				if !ok {
+					return fmt.Errorf(`ingesters[%d]: timeout must be a duration string like "10m"`, i)
+				}
+				d, err := time.ParseDuration(s)
+				if err != nil || d <= 0 {
+					return fmt.Errorf("ingesters[%d]: bad timeout %q: use a positive duration like \"10m\"", i, s)
+				}
+				ic.Timeout = d
+			default:
+				ic.Options[k] = val
+			}
+		}
+		if !vaultNameRe.MatchString(ic.Name) {
+			return fmt.Errorf("ingesters[%d]: name %q must match %s", i, ic.Name, vaultNameRe)
+		}
+		if ic.Type == "" {
+			return fmt.Errorf("ingester %q: type is required", ic.Name)
+		}
+		if names[ic.Name] {
+			return fmt.Errorf("duplicate ingester name %q", ic.Name)
+		}
+		names[ic.Name] = true
+		v.Sources = append(v.Sources, ic)
 	}
 	return nil
 }

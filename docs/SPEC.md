@@ -556,8 +556,12 @@ ingesters only fetch and emit.
    calls `state.SetCursor` once after a clean return. `Fetch` returns an
    error → cursor is NOT persisted (acks already durable; the next run
    re-fetches from the old cursor and dedup no-ops the overlap).
-7. `op.End("ingest(<source>): N new, M deduped, Q quarantined")`, or
-   `op.Discard()` when the run wrote nothing.
+7. `op.End("<source>: N new, M deduped, Q quarantined")`, or `op.Discard()`
+   when the run wrote nothing. (Amended 2026-08-03 at implementation: §9's
+   op machinery prepends the kind to commit subjects, so passing
+   `ingest(<source>): …` would have produced `ingest: ingest(<source>): …`;
+   the commit subject is `ingest: <source>: N new, M deduped, Q
+   quarantined`.)
 8. Per-source summary on stdout:
    `<source>: N new, M deduped, Q quarantined` (exact copy; e2e asserts it).
 

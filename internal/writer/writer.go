@@ -25,14 +25,15 @@ var ErrQuarantined = errors.New("record quarantined")
 
 // Write creates one new note in the vault. Returns the vault-relative path
 // actually written (collisions get deterministic " 2", " 3"… suffixes).
-// On schema failure the record is written to quarantineDir as JSON and
+// On schema failure the record is written to quarantineDir as JSON —
+// named <ts>-<keyHash>.json (SPEC §2) when keyHash is non-empty — and
 // ErrQuarantined is returned (wrapped, with the quarantine file path).
 func Write(vaultRoot string, prof *profile.Profile, noteType string,
-	fields map[string]any, body string, quarantineDir string, now time.Time) (string, error) {
+	fields map[string]any, body string, quarantineDir, keyHash string, now time.Time) (string, error) {
 
 	if sch := prof.Schema(noteType); sch != nil {
 		if err := sch.Validate(fields); err != nil {
-			qPath, qErr := quarantine(quarantineDir, noteType, fields, body, err, now)
+			qPath, qErr := quarantine(quarantineDir, keyHash, noteType, fields, body, err, now)
 			if qErr != nil {
 				return "", fmt.Errorf("schema validation failed AND quarantine failed: %v / %w", err, qErr)
 			}
@@ -132,7 +133,7 @@ func renderNote(prof *profile.Profile, noteType string, fields map[string]any, b
 	return []byte(out.String()), nil
 }
 
-func quarantine(dir, noteType string, fields map[string]any, body string, verr error, now time.Time) (string, error) {
+func quarantine(dir, keyHash, noteType string, fields map[string]any, body string, verr error, now time.Time) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
@@ -146,7 +147,7 @@ func quarantine(dir, noteType string, fields map[string]any, body string, verr e
 	if err != nil {
 		return "", err
 	}
-	f, err := os.CreateTemp(dir, now.UTC().Format("20060102T150405Z")+"-*.json")
+	f, err := createQuarantineFile(dir, keyHash, now)
 	if err != nil {
 		return "", err
 	}
@@ -167,6 +168,32 @@ func quarantine(dir, noteType string, fields map[string]any, body string, verr e
 		return "", err
 	}
 	return f.Name(), nil
+}
+
+// createQuarantineFile opens <ts>-<keyHash>.json with O_EXCL (per-source
+// locks make collisions a same-second re-run bug, not a race — suffix
+// deterministically). Without a key (direct writer callers) fall back to
+// a random-suffix temp name.
+func createQuarantineFile(dir, keyHash string, now time.Time) (*os.File, error) {
+	ts := now.UTC().Format("20060102T150405Z")
+	if keyHash == "" {
+		return os.CreateTemp(dir, ts+"-*.json")
+	}
+	base := ts + "-" + keyHash
+	for i := 1; i <= 100; i++ {
+		name := base
+		if i > 1 {
+			name = fmt.Sprintf("%s-%d", base, i)
+		}
+		f, err := os.OpenFile(filepath.Join(dir, name+".json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		if err == nil {
+			return f, nil
+		}
+		if !os.IsExist(err) {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("cannot allocate quarantine file for %s in %s", base, dir)
 }
 
 func syncQuarantineDir(dir string) error {

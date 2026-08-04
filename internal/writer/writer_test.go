@@ -28,7 +28,7 @@ func TestWriteValidRecord(t *testing.T) {
 	root := t.TempDir()
 	q := filepath.Join(t.TempDir(), "failed")
 
-	rel, err := Write(root, prof, "meeting", meetingFields(), "## Summary\nHi.", q, now)
+	rel, err := Write(root, prof, "meeting", meetingFields(), "## Summary\nHi.", q, "", now)
 	require.NoError(t, err)
 	require.Equal(t, "Meetings/Snyk/2026/05/06/1100 - Weekly Sync.md", rel)
 
@@ -38,7 +38,7 @@ func TestWriteValidRecord(t *testing.T) {
 	require.Contains(t, string(raw), "## Summary")
 
 	// Collision → deterministic suffix, never overwrite.
-	rel2, err := Write(root, prof, "meeting", meetingFields(), "other", q, now)
+	rel2, err := Write(root, prof, "meeting", meetingFields(), "other", q, "", now)
 	require.NoError(t, err)
 	require.Equal(t, "Meetings/Snyk/2026/05/06/1100 - Weekly Sync 2.md", rel2)
 }
@@ -52,7 +52,7 @@ func TestWriteInvalidRecordQuarantines(t *testing.T) {
 	bad := meetingFields()
 	delete(bad, "date") // required by schema AND placement template
 
-	_, err = Write(root, prof, "meeting", bad, "body", q, now)
+	_, err = Write(root, prof, "meeting", bad, "body", q, "", now)
 	require.ErrorIs(t, err, ErrQuarantined)
 
 	entries, err := os.ReadDir(q)
@@ -79,7 +79,7 @@ func TestWriteSymlinkEscapeRefused(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "Meetings"), 0o755))
 	require.NoError(t, os.Symlink(outside, filepath.Join(root, "Meetings", "Snyk")))
 
-	_, err = Write(root, prof, "meeting", meetingFields(), "body", filepath.Join(t.TempDir(), "q"), now)
+	_, err = Write(root, prof, "meeting", meetingFields(), "body", filepath.Join(t.TempDir(), "q"), "", now)
 	require.ErrorContains(t, err, "escapes the vault")
 
 	entries, _ := os.ReadDir(outside)
