@@ -86,8 +86,7 @@ func TestGetCapsRedirects(t *testing.T) {
 func TestGetRefusesRedirectToOddPort(t *testing.T) {
 	// The initial explicit port is allowed; a redirect that CHANGES to a
 	// different non-standard port is refused.
-	var target *httptest.Server
-	target = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer target.Close()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

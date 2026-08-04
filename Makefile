@@ -18,9 +18,15 @@ e2e:
 vet:
 	$(DOCKER_RUN) go vet ./...
 
-# vet + formatting gate; CI adds golangci-lint (pinned in the workflow).
+# vet + formatting + golangci-lint (same version/flags as CI), so `make
+# lint` locally catches everything the pull-request gate does.
+GOLANGCI_IMAGE := golangci/golangci-lint:v2.12.2
+
 lint: vet
 	$(DOCKER_RUN) sh -c 'test -z "$$(gofmt -l ./cmd ./internal)" || (gofmt -l ./cmd ./internal && exit 1)'
+	docker run --rm -v $(CURDIR):/src -w /src \
+		-v pkms-gomod:/go/pkg/mod -v pkms-gobuild:/root/.cache/go-build \
+		$(GOLANGCI_IMAGE) golangci-lint run --build-tags e2e
 
 # Linux binary (native to the container).
 build:

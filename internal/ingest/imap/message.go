@@ -139,12 +139,7 @@ func (m *IMAP) record(raw []byte, internalDate time.Time) (ingest.Record, error)
 // every attachment's name. go-message decodes charsets to UTF-8 as it
 // reads; per-part bytes are capped (SPEC §21).
 func walkParts(mr *mail.Reader) (htmlPart, textPart string, atts []attachment, err error) {
-	parts := 0
-	for {
-		if parts >= maxParts {
-			break // hostile part-count ceiling (SPEC §23)
-		}
-		parts++
+	for parts := 0; parts < maxParts; parts++ { // hostile part-count ceiling (SPEC §23)
 		p, err := mr.NextPart()
 		if err == io.EOF {
 			break

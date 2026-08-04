@@ -134,7 +134,7 @@ func CanonicalURL(u *url.URL) string {
 	c := *u
 	c.Scheme = strings.ToLower(c.Scheme)
 	host := strings.ToLower(c.Hostname())
-	if p := c.Port(); p != "" && !(p == "80" && c.Scheme == "http") && !(p == "443" && c.Scheme == "https") {
+	if p := c.Port(); p != "" && (p != "80" || c.Scheme != "http") && (p != "443" || c.Scheme != "https") {
 		host += ":" + p
 	}
 	c.Host = host

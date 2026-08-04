@@ -60,9 +60,10 @@ var deniedPrefixes = []netip.Prefix{
 func DeniedAddr(ip netip.Addr) bool {
 	ip = ip.Unmap() // ::ffff:169.254.169.254 must be checked as v4
 	// IPv4-compatible IPv6 (::/96, deprecated): the classic bypass family
-	// that Unmap doesn't cover — re-check the embedded v4.
+	// that Unmap doesn't cover — re-check the embedded v4. (:: and ::1 fall
+	// out as 0.0.0.0 / 0.0.0.1, which 0.0.0.0/8 already denies.)
 	if ip.Is6() {
-		if b := ip.As16(); allZero(b[:12]) && !(b[12] == 0 && b[13] == 0 && b[14] == 0 && b[15] <= 1) {
+		if b := ip.As16(); allZero(b[:12]) {
 			v4 := netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
 			if DeniedAddr(v4) {
 				return true
