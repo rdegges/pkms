@@ -15,7 +15,7 @@ stdout 'quarantined'
 stdout 'pkms doctor'
 
 # Nothing leaked into the vault.
-! exists $WORK/vault/Inbox/note.md
+! exists $WORK/vault/_Inbox/note.md
 
 # doctor names the quarantine dir and count; quarantines are warnings, so
 # the exit stays 0.

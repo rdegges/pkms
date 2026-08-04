@@ -2,21 +2,24 @@ schema_version = 1
 name = "para"
 description = "PARA: Projects / Areas / Resources / Archive"
 
-scaffold = ["Inbox", "Projects", "Areas", "Resources", "Archive"]
+scaffold = ["_Inbox", "Projects", "Areas", "Resources", "Archive"]
 root_files = []
 
 [ingest]
-clip = "clip" # everything ingested lands in Inbox/ for later sorting
+clip = "clip" # everything ingested lands in _Inbox/ for later sorting
 
 # The clip type is the only typed note in the generic profile (phase-2
 # question-round decision 1); otherwise only profile-agnostic lint rules
 # (frontmatter well-formedness, links, junk files, placeholders) apply.
+# The capture folder is named `_Inbox` so Obsidian's file explorer floats
+# it to the very top (a leading underscore outranks every other character
+# in Obsidian's natural sort) — you see your unsorted captures first.
 
 [[types]]
 name = "clip"
-scope = ["Inbox/*.md"]
+scope = ["_Inbox/*.md"]
 schema = "schemas/clip.schema.json"
-folder = "Inbox"
+folder = "_Inbox"
 filename = "{{tsname .created}} - {{.title}}"
 
 [lint.frontmatter-present]

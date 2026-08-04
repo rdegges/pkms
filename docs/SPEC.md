@@ -4,10 +4,11 @@ Status: §1–§16 **FROZEN 2026-08-03** (phases 0/1 and the load-bearing phase-
 interfaces). §17–§27 (phase 2 — ingest) **FROZEN 2026-08-03** after the
 phase-2 question round:
 
-1. **para profile**: gains a top-level `Inbox/` folder (scaffolded) and a
+1. **para profile**: gains a top-level `_Inbox/` folder (scaffolded) and a
    minimal `clip` note type targeting it — all ingested notes land in
-   `Inbox/` for later sorting (documented amendment to the phase-0 "para
-   ships no typed notes" decision).
+   `_Inbox/` for later sorting (documented amendment to the phase-0 "para
+   ships no typed notes" decision; the folder was renamed `Inbox`→`_Inbox`
+   post-release, see §29.2).
 2. **Non-HTML push inputs**: exit 2 with honest "lands in phase 2.5" copy —
    no partial asset policy in phase 2.
 3. **Secrets UX**: ship both `pkms secret set|rm` and `pkms auth <source>`.
@@ -854,14 +855,14 @@ html-to-markdown does no charset handling and no sanitization;
   it). The raw-clip `source` pattern widens to `^(https?://|mid:|file://)`
   (question-round decision 4).
 - `para` profile (question-round decision 1): scaffold gains a top-level
-  `Inbox/` folder; a new minimal `clip` type targets it —
-  `folder = "Inbox"`, `filename = "{{tsname .created}} - {{.title}}"`,
-  schema requiring `title` (string), `source`
-  (`^(https?://|mid:|file://)`), `created` (ISO prefix), `tags` (list
-  containing `clip`); `additionalProperties: true` as everywhere. All
-  ingested notes land in `Inbox/` for later sorting. `pkms init` on an
-  existing para vault fills the missing `Inbox/` folder on next run
-  (init is idempotent, §11).
+  `_Inbox/` folder (renamed from `Inbox`, §29.2); a new minimal `clip`
+  type targets it — `folder = "_Inbox"`,
+  `filename = "{{tsname .created}} - {{.title}}"`, schema requiring `title`
+  (string), `source` (`^(https?://|mid:|file://)`), `created` (ISO prefix),
+  `tags` (list containing `clip`); `additionalProperties: true` as
+  everywhere. All ingested notes land in `_Inbox/` for later sorting.
+  `pkms init` on an existing para vault fills the missing `_Inbox/` folder
+  on next run (init is idempotent, §11).
 
 ## 27. Testing & acceptance additions
 
@@ -972,3 +973,23 @@ security lens + codex). Frozen docs get amendments, never silent drift.
     exercises the full fetch→convert→write→dedup→commit pipeline through the
     binary. Crash-recovery and run-twice idempotence are unit-tested in
     `internal/ingest` (the pipeline crash matrix and rerun no-op tests).
+
+## 29. Post-v0.2.0 patch amendments (v0.2.1, 2026-08-03)
+
+1. **HTML→markdown escaping disabled.** The conversion shared by all three
+   ingesters (§20/§22/§23) now runs html-to-markdown with
+   `EscapeMode = disabled`. The default "smart" mode backslash-escapes `_`
+   and `*` inside bare URLs (a Reddit share link's `utm_source` became
+   `utm\_source`), breaking the rendered link — a real user-visible defect
+   found in the v0.2.0 soak. Disabling escaping keeps URLs and body text
+   verbatim; the accepted tradeoff is that a literal `_`/`*` in prose renders
+   as markdown formatting, which is fine for ingested clips. Regression test
+   in `internal/ingest/adhoc_test.go`.
+2. **para capture folder `Inbox` → `_Inbox`.** Renamed so Obsidian's file
+   explorer floats the capture folder to the very top (a leading underscore
+   outranks every other character in Obsidian's natural-sort collation —
+   above `+`/`!`/`@`, digits, and letters). `+` was rejected because it sorts
+   lower and already means "attachments" in the author's conventions; emoji
+   prefixes were rejected for wikilink-autocomplete duplication and
+   Android/Dropbox sync failures. Applies to the public `para` profile
+   (scaffold + `clip` type folder template).

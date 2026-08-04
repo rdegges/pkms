@@ -106,10 +106,10 @@ note in your inbox folder, converted to clean markdown:
 
 ```sh
 pkms ingest https://example.com/great-article
-# ingested → Inbox/2026-08-03T142530+0000 - Great Article.md
+# ingested → _Inbox/2026-08-03T142530+0000 - Great Article.md
 
 pkms ingest https://example.com/great-article    # run it again —
-# already ingested → Inbox/2026-08-03T142530+0000 - Great Article.md
+# already ingested → _Inbox/2026-08-03T142530+0000 - Great Article.md
 ```
 
 Scheduled: configure pull ingesters once, then let cron call `pkms ingest`.
