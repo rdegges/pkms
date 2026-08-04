@@ -1,9 +1,22 @@
-# pkms — Phase 0/1 Specification (DRAFT — not yet frozen)
+# pkms — Phase 0/1/2 Specification
 
-Status: **FROZEN 2026-08-03**. This document freezes the contracts for phases 0
-and 1 and the load-bearing interfaces for phase 2. `docs/PLAN.md` is the parent
-plan; where this spec is silent, the plan governs. `docs/LINT-RULES.md` is part
-of this frozen spec. Changes require a new question round.
+Status: §1–§16 **FROZEN 2026-08-03** (phases 0/1 and the load-bearing phase-2
+interfaces). §17–§27 (phase 2 — ingest) **FROZEN 2026-08-03** after the
+phase-2 question round:
+
+1. **para profile**: gains a top-level `Inbox/` folder (scaffolded) and a
+   minimal `clip` note type targeting it — all ingested notes land in
+   `Inbox/` for later sorting (documented amendment to the phase-0 "para
+   ships no typed notes" decision).
+2. **Non-HTML push inputs**: exit 2 with honest "lands in phase 2.5" copy —
+   no partial asset policy in phase 2.
+3. **Secrets UX**: ship both `pkms secret set|rm` and `pkms auth <source>`.
+4. **Email provenance**: `source: mid:<message-id>` (RFC 2392); the
+   raw-clip/clip `source` schema pattern is `^(https?://|mid:|file://)`.
+`docs/PLAN.md` is the parent plan; where this spec is silent, the plan
+governs. `docs/LINT-RULES.md` is part of this frozen spec. Changes to frozen
+sections require a new question round; deviations discovered later get
+documented amendments, never silent drift.
 
 Decisions from the freeze question round (2026-08-03):
 
@@ -499,3 +512,368 @@ docs/PLAN.md docs/SPEC.md
 .github/workflows/ci.yml release.yml
 Makefile Dockerfile? (no—plain `docker run` in Makefile)
 ```
+
+---
+
+# Phase 2 — Ingest (§17–§27)
+
+Research basis: scout briefs 2026-08-03 (dependency pins verified against
+proxy.golang.org; IMAP semantics against RFC 9051/4549/5322; fetch limits
+against lychee/miniflux/karakeep shipped defaults).
+
+## 17. Ingest pipeline semantics
+
+The pipeline is the only consumer of the frozen §7 contract. It owns dedup,
+durability ordering, quarantine, cursor persistence, and snapshot wrapping;
+ingesters only fetch and emit.
+
+**Run flow, per (vault, source):**
+
+1. Open the source state store (`OpenState`) — takes the per-source flock.
+   Lock already held → print `<source>: already running` and exit 0 (§7).
+2. `snapshot.Begin(vault, "ingest")` — `pre(ingest)` commit isolates the run.
+3. Build the vault's **source-id set**: scan the `VaultIndex` for all
+   frontmatter `source_id` values. This closes the crash window between note
+   rename and ack (see recovery below).
+4. Construct the ingester from its registered factory and config table;
+   call `Fetch(ctx, cursor, emit)` with the last persisted cursor.
+5. `emit(record)` processing order (load-bearing):
+   a. `NaturalKey == ""` → pipeline error (ingester bug); stop the run.
+   b. `state.Seen(key)` → dedup no-op; count and return nil.
+   c. `source_id` already present in the vault's source-id set → **ack
+      repair**: append an ack for the key with the existing note path, count
+      as deduped, return nil. (This is the §7 "identical source_id in vault"
+      recovery: a prior run crashed after rename, before ack.)
+   d. Stamp `source_id: <NaturalKey>` into `Fields`. Ingesters MUST NOT set
+      `source_id` themselves; the pipeline owns it.
+   e. `writer.Write(...)`. On `ErrQuarantined`: the quarantine file is
+      already durable (writer fsyncs it) → `state.Quarantine(key, reason)`,
+      count, return nil — one malformed record never blocks its batch.
+   f. On success: `op.Record(relPath)`, then `state.Ack(key, relPath)`.
+      Ack strictly after rename (§7 durability invariant).
+6. `Fetch` returns nil → persist the cursor: the `Cursor` map is passed by
+   reference; the ingester mutates it as it progresses, and the pipeline
+   calls `state.SetCursor` once after a clean return. `Fetch` returns an
+   error → cursor is NOT persisted (acks already durable; the next run
+   re-fetches from the old cursor and dedup no-ops the overlap).
+7. `op.End("ingest(<source>): N new, M deduped, Q quarantined")`, or
+   `op.Discard()` when the run wrote nothing.
+8. Per-source summary on stdout:
+   `<source>: N new, M deduped, Q quarantined` (exact copy; e2e asserts it).
+
+**Crash-recovery invariant (tested):** kill the pipeline at any point; the
+re-run never duplicates a note and never loses a record. The two windows:
+crash before rename → nothing durable, re-fetch re-emits; crash between
+rename and ack → step 5c ack-repairs from the vault's source-id set.
+
+**Exit codes** (mirrors lint/doctor): `0` clean run (including all-dedup
+no-ops and lock-held early exit); `1` ≥ 1 record quarantined this run;
+`2` execution error (config, auth, network hard failure, pipeline error).
+Scheduled runs therefore alert on nonzero exits.
+
+**Wall-clock bound:** each source run carries a context deadline (default
+`timeout = "10m"` per source, config-overridable) so a wedged server can
+never hang cron.
+
+**`--json`** emits `{"vault":…,"sources":[{"source":…,"new":n,"deduped":n,
+"quarantined":n,"cursor_reset":bool,"notes":[paths…]}]}` — deterministic
+order (config order).
+
+## 18. Config: `[[vaults.ingesters]]`
+
+```toml
+[[vaults]]
+name = "personal"
+# …
+
+  [[vaults.ingesters]]
+  type = "rss"                          # registry key
+  name = "hn"                           # unique per vault, [a-z0-9-]+
+  url  = "https://hnrss.org/frontpage"
+
+  [[vaults.ingesters]]
+  type     = "imap"
+  name     = "fastmail"
+  host     = "imap.fastmail.com"        # implicit TLS; port = 993 default
+  username = "randall@example.com"
+  auth     = "password"                 # "password" | "xoauth2"
+  mailbox  = "INBOX"                    # default "INBOX"
+  # port         = 993
+  # batch        = 200                  # max messages per run
+  # timeout      = "10m"                # per-run wall clock
+  # password_cmd = ["op", "read", "op://Private/fastmail/password"]
+  # enabled      = true                 # default true
+```
+
+- Source identity: `<type>:<name>` (e.g. `imap:fastmail`). State file:
+  `state/<vault>/<type>-<name>.ndjson` (colon is unsafe on some filesystems).
+- `name` must match `[a-z0-9-]+` and be unique within the vault; `type` must
+  name a registered ingester — violations are config errors that name the
+  offending entry and list registered types.
+- **Strict keys:** each factory validates its table and errors on unknown
+  keys (typo protection: `usrname =` must fail loudly, not silently ignore).
+- `password_cmd` is an argv **array**, executed directly — never a shell
+  string (§14). A bare string value is a config error telling the user to
+  use array syntax.
+
+## 19. CLI contract
+
+```
+pkms ingest [<path-or-url>] [--vault v] [--source name] [--json]
+pkms auth <source> [--vault v]          # interactive OAuth bootstrap (§24)
+pkms secret set|rm <source> <kind> [--vault v]   # keyring helper (§24)
+```
+
+- **Push mode** (`pkms ingest <path-or-url>`): one-shot ingest of a URL
+  (http/https only) or an existing regular file. Runs the same pipeline with
+  source `adhoc`: repeated ingest of the same URL/file is a dedup no-op and
+  prints the existing note's path
+  (`already ingested → Resources/Clips/Inbox/….md`). With multiple vaults,
+  push mode requires `--vault`.
+- **Pull mode** (no argument): run all `enabled` configured ingesters for
+  the selected vault; `--source <name>` restricts to one. With multiple
+  vaults and no `--vault`, pull mode runs over ALL vaults (like `snapshot` —
+  it is the cron entry point). No ingesters configured → exit 2 with copy
+  that shows a minimal `[[vaults.ingesters]]` example and mentions
+  `pkms ingest <url>`.
+- `--source` with an unknown name → exit 2, listing configured source names.
+
+## 20. MIME dispatch (push mode)
+
+Sniff with `http.DetectContentType` over the first 512 bytes of the fetched
+body (never trust the `Content-Type` header alone; §14). The header is
+consulted only for charset hints via `x/net/html/charset.DetermineEncoding`.
+
+| sniffed type | handler | lands in |
+| --- | --- | --- |
+| `text/html`, `application/xhtml+xml` | readability → markdown | raw-clip note |
+| `text/plain` (incl. markdown) | body verbatim (fenced only if sniff says binary-ish text? no — verbatim) | raw-clip note |
+| everything else | **phase 2.5** — exit 2: `unsupported content type <t> (PDF/audio/video land in phase 2.5); nothing was written` | — |
+
+*(Question-round decision 2: the plan's "never a refusal" dispatch completes
+in phase 2.5 with the asset policy; until then the error is honest and
+writes nothing.)*
+
+- **HTML pipeline:** hardened fetch (§21) → charset-decode to UTF-8
+  (`charset.NewReader`) → `readability/v2` extract (base URL = fetched URL)
+  → `html-to-markdown/v2` convert → `Record{NoteType: "raw-clip"}` with
+  fields: `title` (extracted, fallback: URL), `source` (input URL,
+  verbatim), `created` (fetch time, RFC3339 with offset), `tags: [clip]`,
+  plus `fetched_url` when the post-redirect URL differs from the input.
+- **Local file:** read (10 MiB cap), sniff, same dispatch; `source` is
+  `file://<absolute path>`; NaturalKey = file content SHA-256.
+- **Canonical-URL NaturalKey** (URL push + RSS fallback): lowercase scheme
+  and host, strip default port (`:80`/`:443`), strip fragment. Nothing else
+  (query params, trailing slashes preserved — tracking-param judgment is
+  agent-layer). The `source` FIELD always stores the user/feed-supplied URL
+  verbatim (karakeep/lychee precedent); normalization is key-only.
+
+## 21. Fetch hardening (threat model, exact numbers)
+
+One shared hardened HTTP client for all outbound fetches (push, RSS):
+
+| control | value | precedent |
+| --- | --- | --- |
+| connect timeout | 3 s | fail fast on filtered private IPs |
+| total request deadline | 20 s | lychee `--timeout` + miniflux default |
+| max redirects | 5 | lychee default |
+| max body, HTML page | 10 MiB | below miniflux's feed cap; articles ≪ 1 MiB |
+| max body, feed | 15 MiB | miniflux `HTTP_CLIENT_MAX_BODY_SIZE` |
+| max body, IMAP message part | 10 MiB | consistency with HTML |
+| feed items per run | 500 (parse, then cap; **log the dropped count**) | defensive; real feeds < 100 |
+| sniff window | 512 B | stdlib `DetectContentType` |
+
+- **SSRF guard:** `net.Dialer.Control` hook on the shared `Transport` — the
+  check runs on the **resolved** IP post-DNS, pre-connect (closes
+  TOCTOU/DNS-rebinding), and therefore re-runs on every redirect hop and
+  every retry. Before range checks, `netip.Addr.Unmap()` v4-in-v6 forms and
+  re-check the embedded v4 (`::ffff:0:0/96`, `64:ff9b::/96`, `2002::/16` —
+  the classic bypass).
+- **Deny (v4):** `0.0.0.0/8`, `10/8`, `100.64/10`, `127/8`, `169.254/16`
+  (cloud metadata), `172.16/12`, `192.0.0/24`, `192.0.2/24`, `192.88.99/24`,
+  `192.168/16`, `198.18/15`, `198.51.100/24`, `203.0.113/24`, `224/4`,
+  `240/4`, `255.255.255.255/32`.
+  **Deny (v6):** `::1/128`, `::/128`, `fc00::/7`, `fe80::/10`, `ff00::/8`.
+- **Schemes/ports:** `http`/`https` only; ports 80/443 plus a port given
+  explicitly in the configured/pushed URL.
+- Refusals and cap breaches are execution errors whose copy names the limit
+  and the URL (e.g. `refusing to fetch <url>: resolves to private address
+  10.0.0.5`).
+- Body caps enforced with `http.MaxBytesReader` BEFORE any parse. Parse
+  calls (readability, markdown conversion, feed decode) additionally run
+  under the request's 20 s context deadline — a pathological document
+  becomes a clean per-item error, not a hang.
+- Go's `encoding/xml` does not expand external entities (no XXE class);
+  `x/net/html` caps element nesting at 512. CI gains a `govulncheck` step to
+  catch future stdlib/x-net parser CVEs.
+- `User-Agent: pkms/<version> (+https://github.com/rdegges/pkms)`. No
+  cookies, no auth headers, TLS verification always on (no insecure flag).
+
+## 22. RSS ingester (`type = "rss"`)
+
+- Fetch under §21 (feed limits), parse with gofeed. Config: `url` (req).
+- **NaturalKey per item:** `GUID` if non-empty; else canonical item link
+  (§20 normalization); else `sha256(feedURL + "\x00" + title + "\x00" +
+  published)`.
+- Record fields: `title` (item title; fallback `(untitled)`), `source`
+  (item link verbatim; fallback feed URL), `created` (published date →
+  RFC3339; `PublishedParsed` nil → fetch time), `author` (when present),
+  `tags: [clip, rss]`. Body: item content (fallback description) HTML →
+  markdown via the same converter; empty → stub body noting the feed left
+  no content.
+- **Cursor** `{etag, last_modified}` (cursor_schema `rss/1`): conditional
+  GET with `If-None-Match`/`If-Modified-Since`; `304 Not Modified` → clean
+  no-op run. Dedup is complete without the cursor — it is purely a
+  bandwidth courtesy.
+- First run backfills every item currently in the feed (≤ 500 cap).
+
+## 23. IMAP ingester (`type = "imap"`)
+
+- `go-imap/v2` `imapclient`, implicit TLS (`DialTLS`, port 993). v1 ships
+  no STARTTLS and no plaintext dial.
+- **Read-only invariant:** mailbox opened with EXAMINE; all body fetches use
+  `Peek` (never sets `\Seen`); pkms never stores flags, never deletes,
+  never expunges.
+- **Cursor** `{uidvalidity, last_uid}` (cursor_schema `imap/1`), resume per
+  RFC 9051 / RFC 4549 §3.2:
+  1. EXAMINE → read `UIDVALIDITY`, `UIDNEXT`.
+  2. `uidvalidity` mismatch → log `cursor reset (uidvalidity changed)`,
+     set `last_uid = 0`, full pass (dedup makes it a cheap no-op sweep).
+  3. `low = last_uid + 1`; if `low >= UIDNEXT` → nothing new, skip the
+     fetch entirely. This sidesteps the `X:*` gotcha: when X exceeds every
+     existing UID, servers return the LAST message, not an empty set.
+  4. Otherwise `UID FETCH low:*` (never `low:UIDNEXT` — misses arrivals
+     racing the EXAMINE), batched, ≤ `batch` (default 200) messages per run.
+  5. After the run, `last_uid = max(UID actually fetched)` — never the
+     EXAMINE-time UIDNEXT.
+- **NaturalKey:** `Message-ID` with angle brackets stripped and surrounding
+  whitespace trimmed, compared case-sensitively (RFC 5322). Missing, empty,
+  no `@`, or > 998 bytes → fallback key
+  `sha256("pkms-mail\x00" + lower(trim(From)) + "\x00" + raw Date header +
+  "\x00" + Subject + "\x00" + To + "\x00" + first 2 KiB of raw body)` —
+  Date+From+Subject breaks Message-ID reuse (cyrus guidance); the body
+  prefix breaks templated-bulk collisions (ePADD finding). `X-GM-MSGID` is
+  not used (Gmail-only; keys must be uniform across providers).
+- **MIME → record** (`go-message`, charset auto-decode wired to
+  `x/net/html/charset`): prefer the `text/html` part (→ readability?
+  no — emails are already "content"; straight html-to-markdown), else
+  `text/plain` verbatim; multipart walk capped at depth 10 and 10 MiB per
+  part; unknown charset is non-fatal (best-effort decode, note the fact in
+  the body). Attachments are NOT stored in phase 2 — the body ends with an
+  `## Attachments` list naming them (name, type, size) so nothing is
+  silently dropped; storage lands with the 2.5 asset policy.
+- Record fields: `title` (RFC 2047–decoded Subject; empty → `(no subject)`),
+  `source` (`mid:<message-id>` — RFC 2392 scheme; question-round decision 4),
+  `created` (Date header → RFC3339; unparseable → INTERNALDATE), `from`,
+  `to` (string lists), `tags: [clip, email]`.
+- Hostile-input posture: email is the normal-hostile case (§14) — all
+  parsing under byte caps, header values sanitized for YAML injection by
+  the writer's marshaller (never raw string concatenation), HTML parts run
+  through the same hardened conversion as web pages.
+
+## 24. Secrets resolution
+
+Never in config (§3). For source `<type>:<name>` in vault `<vault>`, secret
+kind ∈ {`password`, `oauth-client-id`, `oauth-client-secret`,
+`oauth-refresh-token`}, resolution order:
+
+1. **OS keyring** (go-keyring): service `pkms`, account
+   `<vault>/<type>:<name>/<kind>`.
+2. **Env:** `PKMS_<VAULT>_<NAME>_<KIND>` (uppercased, `-` → `_`; e.g.
+   `PKMS_PERSONAL_FASTMAIL_PASSWORD`).
+3. **`password_cmd`** (argv array, direct exec, stdout's first line;
+   `password` kind only).
+4. Nothing found → exit 2; the copy names the exact keyring account and the
+   env var it looked for and shows the `pkms secret set` invocation.
+
+Keyring failures on headless systems (no D-Bus/Secret Service) are treated
+as "not found" and fall through to env/`password_cmd` — go-keyring errors
+there rather than degrading on its own (dep-scout).
+
+**`pkms secret set <source> <kind>`** prompts on stderr (no echo), stores
+via go-keyring, prints the account it wrote. `rm` deletes. This is a thin
+wrapper so users never fight `security`/`secret-tool` syntax.
+
+**XOAUTH2 (Gmail BYO client):**
+
+- `pkms auth <source>` runs the one-time interactive flow: loopback
+  redirect on `127.0.0.1:<random port>` (Google's desktop-app flow; the
+  device-code flow does not allow the `https://mail.google.com/` scope),
+  scope exactly `https://mail.google.com/`, then stores the refresh token
+  (+ client id/secret if entered interactively) in the keyring.
+- Every ingest run exchanges the refresh token for a fresh access token,
+  then authenticates with the XOAUTH2 SASL string
+  (`user=<u>\x01auth=Bearer <tok>\x01\x01`). go-sasl ships no XOAUTH2
+  mechanism (only OAUTHBEARER) — pkms implements the ~15-line
+  `sasl.Client` itself.
+- The OAuth setup doc must state the trap honestly: a consent screen left
+  in **Testing** mode expires refresh tokens after **7 days** — the guide
+  walks through publishing the app (personal use; unverified is fine for
+  your own account) and flags Fastmail/self-hosted app passwords as the
+  zero-OAuth alternative. Personal Gmail with 2SV also still issues app
+  passwords (2026) — documented as the simpler path.
+
+## 25. Dependency pins (phase 2 additions, verified 2026-08-03)
+
+| module | version | role |
+| --- | --- | --- |
+| github.com/emersion/go-imap/v2 | v2.0.0-beta.8 | IMAP client (no stable v2 yet; pin exact) |
+| github.com/emersion/go-sasl | v0.0.0-20241020182733-b788ff22d5a6 | SASL (no tags exist; pinned commit) |
+| github.com/emersion/go-message | v0.18.2 | MIME parsing (RFC 2047, charset decode) |
+| codeberg.org/readeck/go-readability/v2 | v2.1.2 | readability (go-shiori original **archived 2025-12-30**) |
+| github.com/JohannesKaufmann/html-to-markdown/v2 | v2.5.2 | HTML → markdown (input must be UTF-8 first) |
+| github.com/mmcdole/gofeed | v1.4.0 | RSS/Atom/JSON feeds (`*Parsed` dates are nil-able) |
+| github.com/zalando/go-keyring | v0.2.8 | secrets (already pinned §13) |
+| golang.org/x/net | v0.57.0 | html/charset decoding |
+
+Implementation notes that bind: go-imap commands are pipelined — every call
+needs `.Wait()`/`.Collect()`; readability v2 exposes accessor methods +
+`RenderHTML`/`RenderText` (not v1's public fields) and requires a base URL;
+html-to-markdown does no charset handling and no sanitization;
+`keyring.MockInit()` in unit tests, never the real keychain.
+
+## 26. Doctor & profile additions
+
+- `doctor` gains per-source checks: state file parses (header version
+  supported, cursor schema known), quarantine count per source (> 0 →
+  warning finding naming the directory), stale locks.
+- Keyring reachability is checked ONLY when an ingester needs it, as a
+  warning (headless machines must not fail doctor).
+- `rdegges` profile: `raw-clip` gains placement templates —
+  `folder = "Resources/Clips/Inbox"`,
+  `filename = "{{tsname .created}} - {{.title}}"` where `tsname` renders
+  RFC3339 → `2006-01-02T150405-0700` (matches `clip-processed-filename`)
+  and the writer sanitizes filename-unsafe chars (`/ \ # | [ ] ^ :` → `-`)
+  before collision handling. `created` carries full RFC3339 for ingested
+  notes (the schema's `^\d{4}-\d{2}-\d{2}` prefix pattern already admits
+  it). The raw-clip `source` pattern widens to `^(https?://|mid:|file://)`
+  (question-round decision 4).
+- `para` profile (question-round decision 1): scaffold gains a top-level
+  `Inbox/` folder; a new minimal `clip` type targets it —
+  `folder = "Inbox"`, `filename = "{{tsname .created}} - {{.title}}"`,
+  schema requiring `title` (string), `source`
+  (`^(https?://|mid:|file://)`), `created` (ISO prefix), `tags` (list
+  containing `clip`); `additionalProperties: true` as everywhere. All
+  ingested notes land in `Inbox/` for later sorting. `pkms init` on an
+  existing para vault fills the missing `Inbox/` folder on next run
+  (init is idempotent, §11).
+
+## 27. Testing & acceptance additions
+
+- Unit: state-store crash matrix (kill before rename / between rename and
+  ack / after ack), ack-repair via vault source-id set, cursor persistence
+  on clean vs failed Fetch, SSRF guard table-driven (every deny range + the
+  v4-in-v6 unmaps), MIME dispatch table, canonical-URL + Message-ID +
+  fallback-key normalization, secrets resolution order (keyring mocked).
+- Hermetic tests (blind, cross-model) on the spec-able core: dedup keys,
+  cursor semantics, MIME dispatch, SSRF decisions, quarantine ordering.
+- e2e (txtar, extending `e2e/testdata/`): URL ingest happy path (local
+  httptest fixture), re-run dedup no-op, quarantine on schema failure, SSRF
+  refusal copy, `ingest` with no config, crash-recovery simulation, RSS
+  fixture run-twice, IMAP against an in-process test server.
+- Acceptance (local, never CI): real HTML pages + a scratch IMAP mailbox
+  against a COPY of the real vault; every ingester runs TWICE and the vault
+  diffs byte-identical on the second run.
+- Binding phase exit (plan): scheduled email ingest runs a week with zero
+  duplicate notes — cron setup happens only after explicit go-ahead, on the
+  real vault, after merge.
