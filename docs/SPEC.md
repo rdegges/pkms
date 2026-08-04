@@ -976,7 +976,7 @@ security lens + codex). Frozen docs get amendments, never silent drift.
 
 ## 29. Post-v0.2.0 patch amendments (v0.2.1, 2026-08-03)
 
-1. **HTML→markdown escaping disabled.** The conversion shared by all three
+1. **HTML→markdown escaping disabled.** *(Superseded by §30 in v0.2.2 — smart escaping + URL linkify.)* The conversion shared by all three
    ingesters (§20/§22/§23) now runs html-to-markdown with
    `EscapeMode = disabled`. The default "smart" mode backslash-escapes `_`
    and `*` inside bare URLs (a Reddit share link's `utm_source` became
@@ -993,3 +993,29 @@ security lens + codex). Frozen docs get amendments, never silent drift.
    prefixes were rejected for wikilink-autocomplete duplication and
    Android/Dropbox sync failures. Applies to the public `para` profile
    (scaffold + `clip` type folder template).
+
+## 30. v0.2.2 — foolproof-ish conversion (smart escaping + URL linkify)
+
+Supersedes §29.1. v0.2.1 disabled escaping to save URLs, but that let a
+literal `_`/`*` in body prose render as accidental emphasis. v0.2.2 gets both
+halves right, matching how mature converters (remark, pandoc) and the whole
+turndown-based clipper ecosystem handle it:
+
+- **Escaping is back to `smart`** (the library/ecosystem default): a literal
+  `_`/`*` in prose is backslash-escaped so it renders as text.
+- **Bare-text URLs are linkified before conversion** (`internal/ingest/
+  linkify.go`): a plain `https://…` in a text node is wrapped in `<a href>`
+  so the converter emits it as a link *destination*, which it never escapes —
+  so `?utm_source=share` stays intact and clickable. (The display label may
+  carry escaped underscores; Obsidian renders those literally.)
+
+This beats the turndown-based clippers (Obsidian Web Clipper, karakeep, …),
+which keep smart escaping but do NOT linkify, so bare-text URLs still break
+for them. linkify skips URLs already inside `<a>`/`code`/`pre`/`script`/
+`style`/`kbd`/`samp`, stops matching at ASCII+Unicode whitespace and format
+chars (nbsp/ZWSP), trims trailing sentence punctuation (balanced-paren
+aware), requires a non-empty host, and is best-effort (returns input
+unchanged on any parse error). It runs inside the §21 parse deadline. No
+truly foolproof conversion exists (markdown is ambiguous), but this handles
+every real case: prose safe, URLs intact.
+

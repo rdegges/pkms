@@ -64,15 +64,16 @@ func Sniff(body []byte) (Kind, string) {
 const parseTimeout = 20 * time.Second
 
 // mdConverter is the shared html-to-markdown converter (goroutine-safe).
-// Escaping is DISABLED on purpose: the default "smart" mode backslash-
-// escapes `_`/`*` inside bare URLs (e.g. a Reddit link's `utm_source`
-// becomes `utm\_source`), which breaks the link in the rendered note —
-// a real, user-visible defect. Disabling escaping keeps URLs and text
-// verbatim; the tradeoff is that a literal `_`/`*` in body prose renders
-// as markdown formatting, which is acceptable for ingested clips.
+// Escaping is SMART (the library/ecosystem default): a literal `_`/`*` in
+// body prose is backslash-escaped so it renders as text, not accidental
+// emphasis. Smart mode's one failure mode is that it also escapes `_`/`*`
+// inside a BARE-TEXT URL (breaking the link) — but the converter never
+// escapes a link DESTINATION, so we fix that upstream by linkifying bare
+// URLs (linkifyBareURLs) before conversion, turning them into destinations.
+// Prose stays safe AND URLs stay intact — see SPEC §30.
 var mdConverter = converter.NewConverter(
 	converter.WithPlugins(base.NewBasePlugin(), commonmark.NewCommonmarkPlugin()),
-	converter.WithEscapeMode(converter.EscapeModeDisabled),
+	converter.WithEscapeMode(converter.EscapeModeSmart),
 )
 
 // ConvertHTML turns an HTML fragment into markdown under parseTimeout. All
@@ -85,7 +86,9 @@ func ConvertHTML(html string) (string, error) {
 		err error
 	}, 1)
 	go func() {
-		md, err := mdConverter.ConvertString(html)
+		// linkify runs inside the deadline too (SPEC §21): it parses the
+		// full HTML, so it must not be able to hang the caller either.
+		md, err := mdConverter.ConvertString(linkifyBareURLs(html))
 		done <- struct {
 			md  string
 			err error

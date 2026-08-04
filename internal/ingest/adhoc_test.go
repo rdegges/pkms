@@ -161,12 +161,24 @@ func TestFileRecordMissing(t *testing.T) {
 	require.ErrorContains(t, err, "not an http(s) URL and not an existing file")
 }
 
-func TestConvertHTMLDoesNotEscapeURLUnderscores(t *testing.T) {
-	// Regression: smart-mode escaping turned utm_source into utm\_source,
-	// breaking links in ingested notes (reported on a real Reddit email).
+func TestConvertHTMLBareURLDestinationIsClean(t *testing.T) {
+	// Regression: smart-mode escaping turned utm_source into utm\_source in
+	// a bare-text URL, breaking the link (reported on a real Reddit email).
+	// Fixed by linkifying bare URLs → the link DESTINATION is never escaped.
 	md, err := ConvertHTML(`<p>See https://ex.com/whats_the_most/?utm_source=share&utm_medium=ios_app here</p>`)
 	require.NoError(t, err)
-	require.Contains(t, md, "utm_source=share")
-	require.Contains(t, md, "whats_the_most")
-	require.NotContains(t, md, `\_`, "no backslash-escaped underscores in the output")
+	// The full parenthesized destination carries the URL verbatim — no
+	// backslashes — so the link is clickable. (The display label may carry
+	// escaped underscores; Obsidian renders those as literal underscores.)
+	require.Contains(t, md, "](https://ex.com/whats_the_most/?utm_source=share&utm_medium=ios_app)",
+		"link destination is unescaped and clickable")
+}
+
+func TestConvertHTMLEscapesLiteralEmphasisInProse(t *testing.T) {
+	// The other half: a literal _/* in prose must NOT become italic/bold.
+	md, err := ConvertHTML(`<p>Literal _emphasis_ and a*b*c and some_var_name.</p>`)
+	require.NoError(t, err)
+	require.Contains(t, md, `\_emphasis`, "leading emphasis underscore is escaped")
+	require.Contains(t, md, `a\*b\*c`, "asterisks escaped so no bold")
+	require.Contains(t, md, `some\_var\_name`, "intraword underscores escaped")
 }
