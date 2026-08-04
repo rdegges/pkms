@@ -829,6 +829,7 @@ wrapper so users never fight `security`/`secret-tool` syntax.
 | github.com/mmcdole/gofeed | v1.4.0 | RSS/Atom/JSON feeds (`*Parsed` dates are nil-able) |
 | github.com/zalando/go-keyring | v0.2.8 | secrets (already pinned §13) |
 | golang.org/x/net | v0.57.0 | html/charset decoding |
+| golang.org/x/term | v0.45.0 | no-echo secret prompt (`pkms secret set`) |
 
 Implementation notes that bind: go-imap commands are pipelined — every call
 needs `.Wait()`/`.Collect()`; readability v2 exposes accessor methods +
