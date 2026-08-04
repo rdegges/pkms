@@ -81,13 +81,14 @@ var mdConverter = converter.NewConverter(
 // through this so §21's parse-deadline promise holds everywhere, not just
 // in push mode. A stuck goroutine is bounded by the short-lived process.
 func ConvertHTML(html string) (string, error) {
-	html = linkifyBareURLs(html)
 	done := make(chan struct {
 		md  string
 		err error
 	}, 1)
 	go func() {
-		md, err := mdConverter.ConvertString(html)
+		// linkify runs inside the deadline too (SPEC §21): it parses the
+		// full HTML, so it must not be able to hang the caller either.
+		md, err := mdConverter.ConvertString(linkifyBareURLs(html))
 		done <- struct {
 			md  string
 			err error

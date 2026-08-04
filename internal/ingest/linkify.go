@@ -9,10 +9,14 @@ import (
 	"golang.org/x/net/html/atom"
 )
 
-// bareURLRe matches an http(s) URL run. It is deliberately greedy up to the
-// first whitespace or angle bracket; trailing sentence punctuation is
-// trimmed afterward by trimTrailingURLPunct (the GFM-autolink problem).
-var bareURLRe = regexp.MustCompile(`https?://[^\s<>` + "`" + `"']+`)
+// bareURLRe matches an http(s) URL run (scheme case-insensitive). The
+// character class stops at ASCII whitespace (\s), Unicode space separators
+// (\p{Z}, e.g. U+00A0 nbsp) and format chars (\p{Cf}, e.g. U+200B zero-width
+// space) — Go's \s is ASCII-only, and email HTML is full of nbsp/ZWSP right
+// after URLs — plus angle brackets, backtick and double-quote. Apostrophes
+// are allowed mid-URL (GFM does) and only trimmed when trailing. Trailing
+// sentence punctuation is handled by trimTrailingURLPunct.
+var bareURLRe = regexp.MustCompile(`(?i)https?://[^\s\p{Z}\p{Cf}<>` + "`" + `"]+`)
 
 // skipLinkify names elements whose text must NOT be linkified: already a
 // link, or code/verbatim/non-content contexts.
@@ -33,8 +37,8 @@ var skipLinkify = map[atom.Atom]bool{
 // are left untouched. On any parse/render error the input is returned
 // unchanged — linkifying is a best-effort enhancement, never a hard failure.
 func linkifyBareURLs(fragment string) string {
-	if !strings.Contains(fragment, "http") {
-		return fragment // fast path: nothing to do
+	if !strings.Contains(fragment, "://") {
+		return fragment // fast path: no scheme-delimited URL possible
 	}
 	doc, err := html.Parse(strings.NewReader(fragment))
 	if err != nil {
@@ -104,8 +108,10 @@ func linkifyTextNode(n *html.Node) {
 		start, end := loc[0], loc[1]
 		raw := text[start:end]
 		url, trailing := trimTrailingURLPunct(raw)
-		if url == "" {
-			continue // whole match was punctuation somehow; leave as text
+		if !hasHost(url) {
+			// e.g. "https://." trimmed down to a hostless scheme — not a
+			// real URL; leave the whole match as plain text.
+			continue
 		}
 		if start > last {
 			pieces = append(pieces, textNode(text[last:start]))
@@ -127,6 +133,13 @@ func linkifyTextNode(n *html.Node) {
 		parent.InsertBefore(p, n)
 	}
 	parent.RemoveChild(n)
+}
+
+// hasHost reports whether url has at least one character after "://" — i.e.
+// it isn't a bare, hostless scheme like "https://".
+func hasHost(url string) bool {
+	i := strings.Index(url, "://")
+	return i >= 0 && i+3 < len(url)
 }
 
 func textNode(s string) *html.Node {

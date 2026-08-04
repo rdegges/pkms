@@ -98,3 +98,38 @@ func TestLinkifyMalformedHTMLReturnsBestEffort(t *testing.T) {
 		require.Contains(t, out, "x.com/a_b", "content preserved for %q", in)
 	}
 }
+
+func TestLinkifyStopsAtUnicodeWhitespace(t *testing.T) {
+	// Go's \s is ASCII-only; nbsp (U+00A0) and zero-width space (U+200B)
+	// right after a URL must terminate it, not get absorbed (red-team HIGH).
+	for _, sp := range []string{" ", "\u00a0", "\u200b"} { // space, nbsp, ZWSP
+		out := linkifyBareURLs("<p>see https://x.com/a_b" + sp + "next word</p>")
+		require.Contains(t, out, `href="https://x.com/a_b"`, "space %U must end the URL", []rune(sp)[0])
+		require.NotContains(t, out, "next\"", "the following word is not pulled into the href")
+	}
+	// Two URLs separated only by nbsp both linkify (the match must split).
+	out := linkifyBareURLs("<p>https://x.com/a_b\u00a0https://y.com/c_d</p>")
+	require.Equal(t, 2, strings.Count(out, "<a "), out)
+}
+
+func TestLinkifyHostlessSchemeStaysText(t *testing.T) {
+	out := linkifyBareURLs(`<p>Go to https://. Done</p>`)
+	require.NotContains(t, out, "<a ", "a hostless scheme is not a link: %s", out)
+	require.Contains(t, out, "https://", "text preserved")
+}
+
+func TestLinkifyUppercaseScheme(t *testing.T) {
+	out := linkifyBareURLs(`<p>HTTPS://X.COM/A_B here</p>`)
+	require.Contains(t, out, `href="HTTPS://X.COM/A_B"`, out)
+}
+
+func TestLinkifyApostropheInPath(t *testing.T) {
+	// Mid-URL apostrophe stays in the URL (GFM), not truncated at "it".
+	// (linkify emits it entity-encoded as &#39;, which round-trips.)
+	out := linkifyBareURLs(`<p>https://x.com/it's_here ok</p>`)
+	require.Contains(t, out, `it&#39;s_here`, out)
+	// End-to-end: the markdown link destination has the apostrophe restored.
+	md, err := ConvertHTML(`<p>https://x.com/it's_here ok</p>`)
+	require.NoError(t, err)
+	require.Contains(t, md, "it's_here)", "apostrophe preserved in destination: %s", md)
+}
