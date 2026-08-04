@@ -7,6 +7,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+
+	"github.com/rdegges/pkms/internal/fetch"
 )
 
 // Exit codes shared by lint/doctor per SPEC §8:
@@ -41,12 +43,16 @@ func newRootCmd() *cobra.Command {
 		newLintCmd(),
 		newQueryCmd(),
 		newProfileCmd(),
+		newIngestCmd(),
+		newSecretCmd(),
+		newAuthCmd(),
 	)
 	return root
 }
 
 // Execute runs the CLI and returns the process exit code.
 func Execute() int {
+	fetch.Version = version // User-Agent carries the build version
 	err := newRootCmd().Execute()
 	if err == nil {
 		return 0

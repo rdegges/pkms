@@ -1,0 +1,13 @@
+# Phase 12: ingest before any ingesters exist — the error tells the user
+# exactly what to do next, and --source names what IS configured.
+
+exec pkms init --path $WORK/vault
+
+! exec pkms ingest
+stderr 'no ingesters configured for vault "vault"'
+stderr '\[\[vaults.ingesters\]\]'
+stderr 'pkms ingest https://example.com/article'
+
+! exec pkms ingest --source nope
+stderr 'no ingester named "nope"'
+stderr 'configured: none'

@@ -1,0 +1,32 @@
+# Phase 15: a record that fails schema validation is quarantined OUTSIDE
+# the vault (exit 1 so cron notices), the vault stays clean, doctor reports
+# the count, and the quarantined key is never retried.
+
+exec pkms init --path $WORK/vault
+
+# Eject para and make the clip schema impossible to satisfy, so ingest
+# quarantines deterministically.
+exec pkms profile eject para $WORK/prof
+exec sh -c 'sed -i "s/\"title\", \"source\"/\"impossible-key\", \"title\", \"source\"/" $WORK/prof/schemas/clip.schema.json'
+exec sh -c 'sed -i "s|profile = \"para\"|profile = \"$WORK/prof\"|" "$PKMS_CONFIG"'
+
+! exec pkms ingest note.md
+stdout 'quarantined'
+stdout 'pkms doctor'
+
+# Nothing leaked into the vault.
+! exists $WORK/vault/Inbox/note.md
+
+# doctor names the quarantine dir and count; quarantines are warnings, so
+# the exit stays 0.
+exec pkms doctor
+stdout '1 quarantined record\(s\)'
+
+# The quarantined key is seen: a retry is a dedup no-op, not a re-fail.
+exec pkms ingest note.md
+stdout '0 new, 1 deduped, 0 quarantined'
+
+-- note.md --
+# A perfectly nice note
+
+that the impossible schema rejects anyway.

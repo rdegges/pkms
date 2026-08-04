@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -154,4 +155,90 @@ func TestAppendVaultCreatesAndAppends(t *testing.T) {
 
 	raw, _ = os.ReadFile(p)
 	require.Contains(t, string(raw), "# my comment")
+}
+
+func TestLoadIngesters(t *testing.T) {
+	p := writeConfig(t, `
+version = 1
+
+[[vaults]]
+name = "personal"
+path = "/vaults/personal"
+profile = "para"
+
+  [[vaults.ingesters]]
+  type = "rss"
+  name = "hn"
+  url  = "https://example.com/feed"
+
+  [[vaults.ingesters]]
+  type    = "imap"
+  name    = "mail"
+  host    = "imap.example.com"
+  enabled = false
+  timeout = "5m"
+`)
+	cfg, err := Load(p)
+	require.NoError(t, err)
+	srcs := cfg.Vaults[0].Sources
+	require.Len(t, srcs, 2)
+
+	require.Equal(t, "rss:hn", srcs[0].Source())
+	require.True(t, srcs[0].Enabled)
+	require.Equal(t, DefaultSourceTimeout, srcs[0].Timeout)
+	require.Equal(t, map[string]any{"url": "https://example.com/feed"}, srcs[0].Options)
+
+	require.False(t, srcs[1].Enabled)
+	require.Equal(t, 5*time.Minute, srcs[1].Timeout)
+	require.Equal(t, map[string]any{"host": "imap.example.com"}, srcs[1].Options)
+}
+
+func TestLoadIngesterErrors(t *testing.T) {
+	cases := []struct {
+		name, table, wantErr string
+	}{
+		{"missing name", "type = \"rss\"", "name"},
+		{"bad name", "type = \"rss\"\nname = \"Bad Name\"", "must match"},
+		{"missing type", "name = \"ok\"", "type is required"},
+		{"bad timeout", "type = \"rss\"\nname = \"ok\"\ntimeout = \"soon\"", "bad timeout"},
+		{"non-bool enabled", "type = \"rss\"\nname = \"ok\"\nenabled = \"yes\"", "enabled must be a boolean"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeConfig(t, `
+version = 1
+
+[[vaults]]
+name = "v"
+path = "/v"
+profile = "para"
+
+  [[vaults.ingesters]]
+  `+tc.table+`
+`)
+			_, err := Load(p)
+			require.ErrorContains(t, err, tc.wantErr)
+		})
+	}
+}
+
+func TestLoadRejectsDuplicateIngesterNames(t *testing.T) {
+	p := writeConfig(t, `
+version = 1
+
+[[vaults]]
+name = "v"
+path = "/v"
+profile = "para"
+
+  [[vaults.ingesters]]
+  type = "rss"
+  name = "same"
+
+  [[vaults.ingesters]]
+  type = "imap"
+  name = "same"
+`)
+	_, err := Load(p)
+	require.ErrorContains(t, err, `duplicate ingester name "same"`)
 }

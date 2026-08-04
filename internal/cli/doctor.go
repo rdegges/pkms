@@ -1,13 +1,17 @@
 package cli
 
 import (
+	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/zalando/go-keyring"
 
 	"github.com/rdegges/pkms/internal/config"
 	"github.com/rdegges/pkms/internal/gitx"
@@ -101,10 +105,43 @@ func runDoctor(cmd *cobra.Command, jsonOut bool) error {
 			ok("vault-git", v.Name, "")
 		}
 
-		if n := countFiles(paths.StateDir("failed", v.Name)); n > 0 {
-			warn("quarantine", v.Name, fmt.Sprintf("%d quarantined record(s) in %s", n, paths.StateDir("failed", v.Name)))
-		} else {
+		// Quarantine counts, per source (SPEC §26).
+		totalQ := 0
+		for _, ic := range v.Sources {
+			qdir := paths.StateDir("failed", v.Name, strings.ReplaceAll(ic.Source(), ":", "-"))
+			if n := countFiles(qdir); n > 0 {
+				warn("quarantine ("+ic.Source()+")", v.Name, fmt.Sprintf("%d quarantined record(s) in %s", n, qdir))
+				totalQ += n
+			}
+		}
+		// The adhoc (push) source and any legacy files aren't tied to a
+		// configured source — count the rest of the vault's failed dir too.
+		if all := countFiles(paths.StateDir("failed", v.Name)); all > totalQ {
+			warn("quarantine", v.Name, fmt.Sprintf("%d quarantined record(s) in %s", all-totalQ, paths.StateDir("failed", v.Name)))
+		} else if all == 0 {
 			ok("quarantine", v.Name, "empty")
+		}
+
+		// Per-source ingest state files parse and carry a supported
+		// version + a known cursor schema (SPEC §26).
+		for _, ic := range v.Sources {
+			name := "ingest-state (" + ic.Source() + ")"
+			switch detail, err := checkStateFile(v.Name, ic); {
+			case err != nil:
+				fail(name, v.Name, err.Error())
+			default:
+				ok(name, v.Name, detail)
+			}
+		}
+
+		// Keyring reachability — ONLY when an ingester needs a secret, and
+		// only as a warning (headless machines must never fail doctor).
+		if needsKeyring(v) {
+			if err := probeKeyring(); err != nil {
+				warn("keyring", v.Name, "not reachable ("+err.Error()+"); ingesters will fall back to $PKMS_* env vars / password_cmd")
+			} else {
+				ok("keyring", v.Name, "reachable")
+			}
 		}
 	}
 
@@ -173,6 +210,62 @@ func countFiles(dir string) int {
 		return nil
 	})
 	return n
+}
+
+// checkStateFile validates a source's NDJSON ledger header without taking
+// its lock (doctor must not contend with a running ingest).
+func checkStateFile(vaultName string, ic config.IngesterConfig) (string, error) {
+	p := paths.StateDir("state", vaultName, strings.ReplaceAll(ic.Source(), ":", "-")+".ndjson")
+	f, err := os.Open(p)
+	if os.IsNotExist(err) {
+		return "no runs yet", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	sc := bufio.NewScanner(f)
+	if !sc.Scan() {
+		return "empty", nil
+	}
+	var header struct {
+		V            int    `json:"v"`
+		CursorSchema string `json:"cursor_schema"`
+	}
+	if err := json.Unmarshal(sc.Bytes(), &header); err != nil {
+		return "", fmt.Errorf("%s: header does not parse: %v", p, err)
+	}
+	if header.V != 1 {
+		return "", fmt.Errorf("%s: state version %d is not supported by this pkms; upgrade pkms", p, header.V)
+	}
+	if s := header.CursorSchema; s != "" && !knownCursorSchemas[s] {
+		return "", fmt.Errorf("%s: cursor schema %q is not known to this pkms; upgrade pkms", p, s)
+	}
+	return "ok", nil
+}
+
+// knownCursorSchemas are the cursor formats this binary can read (SPEC §26).
+var knownCursorSchemas = map[string]bool{"imap/1": true, "rss/1": true}
+
+// needsKeyring reports whether any of a vault's ingesters resolve a secret.
+func needsKeyring(v *config.Vault) bool {
+	for _, ic := range v.Sources {
+		if ic.Type == "imap" {
+			return true
+		}
+	}
+	return false
+}
+
+// probeKeyring distinguishes an unreachable backend (headless: no D-Bus /
+// Secret Service) from a normal "not found" — go-keyring returns ErrNotFound
+// when the backend works but the key is absent.
+func probeKeyring() error {
+	_, err := keyring.Get("pkms", "pkms-doctor-probe")
+	if err == nil || errors.Is(err, keyring.ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 func staleLocks(dir string) []string {

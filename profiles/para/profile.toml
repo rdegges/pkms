@@ -2,14 +2,25 @@ schema_version = 1
 name = "para"
 description = "PARA: Projects / Areas / Resources / Archive"
 
-scaffold = ["Projects", "Areas", "Resources", "Archive"]
+scaffold = ["Inbox", "Projects", "Areas", "Resources", "Archive"]
 root_files = []
 
-# No typed notes in the generic profile: only profile-agnostic lint rules
+[ingest]
+clip = "clip" # everything ingested lands in Inbox/ for later sorting
+
+# The clip type is the only typed note in the generic profile (phase-2
+# question-round decision 1); otherwise only profile-agnostic lint rules
 # (frontmatter well-formedness, links, junk files, placeholders) apply.
 
+[[types]]
+name = "clip"
+scope = ["Inbox/*.md"]
+schema = "schemas/clip.schema.json"
+folder = "Inbox"
+filename = "{{tsname .created}} - {{.title}}"
+
 [lint.frontmatter-present]
-enabled = false # no typed notes to require frontmatter of
+enabled = false # ingested clips always get frontmatter; nothing to enforce
 
 [lint.no-junk-files]
 enabled = true

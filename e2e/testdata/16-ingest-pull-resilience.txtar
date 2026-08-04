@@ -1,0 +1,31 @@
+# Phase 16: the unattended pull sweep is resilient — one source failing
+# (missing credential) does not stop the others, the run reports each to
+# stderr and exits 2, and an explicitly targeted --source still fails loud.
+
+exec pkms init --path $WORK/vault
+exec sh -c 'cat ingesters.toml >> "$PKMS_CONFIG"'
+
+# Sweep: both sources error (no creds, headless keyring) but BOTH are
+# attempted and reported; exit 2.
+! exec pkms ingest
+stderr 'aaa: ERROR'
+stderr 'bbb: ERROR'
+stderr '2 ingester\(s\) failed'
+
+# Explicit single source fails loudly on stderr, immediately.
+! exec pkms ingest --source aaa
+stderr 'no password found for imap:aaa'
+
+-- ingesters.toml --
+
+  [[vaults.ingesters]]
+  type     = "imap"
+  name     = "aaa"
+  host     = "127.0.0.1"
+  username = "a@example.com"
+
+  [[vaults.ingesters]]
+  type     = "imap"
+  name     = "bbb"
+  host     = "127.0.0.1"
+  username = "b@example.com"
