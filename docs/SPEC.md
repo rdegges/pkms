@@ -1019,3 +1019,245 @@ unchanged on any parse error). It runs inside the §21 parse deadline. No
 truly foolproof conversion exists (markdown is ambiguous), but this handles
 every real case: prose safe, URLs intact.
 
+## 31. Phase 2.5 — media handlers & asset policy (frozen 2026-08-09)
+
+Completes the §20 dispatch: push mode never again refuses a sniffed type.
+`application/pdf` → extracted text + the PDF stored as an asset (§31.6);
+`audio/*`/`video/*` → an asset note with hook-supplied metadata (§31.7);
+everything else → a generic asset note (hash + mime). Fulfills the phase-2
+promises left open by §20 ("phase 2.5" exit-2 row) and §23 (attachments
+listed, not stored), and lands the `asset` note type PLAN.md assigned to
+phase 2 but which never shipped.
+
+**Non-goals (explicit cuts).** pkms ships nothing for git-lfs (deviation
+from PLAN.md's "opt-in only" wording, recorded here — users may adopt lfs
+themselves). No in-binary transcription or media-container parsing —
+ffprobe-style data comes only from `probe_cmd` (§31.7); the binary stays
+deterministic. No hooks for pull ingesters (cron must never run ten-minute
+user commands against hostile email attachments). No tracking-param
+stripping (unchanged from §20 — agent-layer judgment). No playback,
+preview, or thumbnailing. No reprocessing of records ingested before their
+handler shipped: a file captured as a generic asset before the PDF handler
+existed stays as-is; dedup holds (same NaturalKey → no-op).
+
+### 31.1 Dispatch completion (§20 table, final form)
+
+| sniffed type | handler | lands in |
+| --- | --- | --- |
+| `text/html`, `application/xhtml+xml` | readability → markdown (unchanged) | clip note |
+| `text/plain` (incl. markdown) | body verbatim (unchanged) | clip note |
+| `application/pdf` | PDF handler (§31.6) | asset note |
+| `audio/*`, `video/*`, `application/ogg` | media handler (§31.7) | asset note |
+| everything else | generic asset: store per §31.2, no body extraction | asset note |
+
+The §20 exit-2 row (`unsupported content type …`) is deleted; push mode
+exits 2 on a *type* never again. Sniffing stays `http.DetectContentType`
+over the first 512 bytes (§20).
+
+**Extension reclassification (local files only).** A local file sniffing
+`application/octet-stream` may be reclassified by a fixed in-code extension
+map. The map admits an entry ONLY with an accompanying table test proving
+`DetectContentType` misses that container (candidates to try: mp3 without
+ID3, m4a, mov, mkv, avi, flac — each admitted or dropped on test evidence,
+never on assumption). Remote URLs never consult the map: the filename is
+server-controlled, and a wrong sniff still lands safely as a generic asset.
+
+### 31.2 Asset storage policy
+
+Every stored asset is streamed once to compute its SHA-256 and size, then
+placed by threshold:
+
+- **≤ threshold → into the vault.** Copied to the profile's attachments
+  dir (`attachments` manifest key; para gains `attachments =
+  "Attachments"`) under its sanitized original filename — the
+  `profile.sanitizeFilename` semantics, shared with §23's attachment-name
+  neutralization, with **extension-preserving** truncation under the
+  180-byte basename cap (§28.8). Finalization is temp file + `os.Link`
+  (the `vault.CreateNewNote` pattern) — **never rename-over**; an existing
+  path is never overwritten. Same name + same sha256 already present →
+  idempotent reuse (no copy, link the existing file). Same name, different
+  sha → deterministic ` 2`, ` 3`… suffix before the extension.
+- **> threshold, remote source → content-addressed store** at
+  `$XDG_DATA_HOME/pkms/assets/<sha256><ext>` (§2's asset path, now real).
+- **> threshold, local file → referenced in place** (absolute path); the
+  user already owns the bytes; pkms copies nothing.
+
+CAS and reference-in-place paths are **machine-local absolute paths**: the
+vault syncs, they don't. A note carrying such a path renders a dead link on
+every other device — accepted per PLAN.md's asset policy and stated here so
+it is a documented trade, not a surprise.
+
+**Threshold default: 5 MiB** (`[vaults.assets] threshold = "5MiB"`,
+human-readable size string; a parse error names the vault in its copy).
+Deviation from PLAN.md's "default 25MB" sketch, on evidence checked
+2026-08-09: Obsidian Sync caps files at **5 MB on the Standard plan**
+(200 MB on Plus). A 25 MiB default would put 5–25 MiB files in the vault
+where Standard-plan sync silently refuses them — defeating the policy's own
+stated rationale (git bloat + sync limits). Web PDFs and email attachments
+are almost all under 5 MiB, so the common case still lands in-vault;
+Plus-plan users raise one config key.
+
+### 31.3 `fetch.Download` (§21 additions)
+
+Remote non-HTML bodies are never whole-buffered. `fetch.Download` streams
+to an OS-temp spool file and returns `{spool path, size, first-512 sniff
+bytes, FinalURL, Header}`. New §21 table rows (exact numbers):
+
+| control | value | precedent |
+| --- | --- | --- |
+| max body, asset download | 100 MiB (`[vaults.assets] max_download` override) | must exceed threshold or CAS is unreachable |
+| download total deadline | 10 m (its own; the 20 s page deadline does NOT govern Download) | §17 per-source wall clock |
+
+Connect timeout (3 s), the SSRF-guarded dialer, the redirect cap (5), and
+the port policy are inherited from the one hardened client — inherited by
+construction, stated here so it is load-bearing, not incidental. An
+over-cap download aborts with an execution error (exit 2), never a
+truncated asset. Spool files orphaned by a crash live in the OS temp dir
+and are the OS's to reap — pkms tracks nothing.
+
+The §20 local-file 10 MiB read cap is **rescoped to HTML/text kinds only**
+(they are whole-buffered for parsing); asset-kind local files are streamed
+under no size cap (the threshold decides placement, not admissibility).
+The §20 error copy for over-cap HTML/text is unchanged.
+
+### 31.4 The `asset` note type
+
+Ships in both built-in profiles, declared **before** the clip types with a
+content trigger:
+
+```toml
+[[types]]                       # BEFORE clip: TypeOf is first-match, and
+name = "asset"                  # asset notes land in the same capture
+require_any_key = ["sha256"]    # folder — without this trigger they'd
+scope = ["_Inbox/*.md"]         # classify as clip and fail the clip
+schema = "schemas/asset.schema.json"  # schema's `tags contains "clip"`.
+folder = "_Inbox"               # (rdegges: Resources/Clips/Inbox)
+filename = "{{tsname .created}} - {{.title}}"
+```
+
+Schema fields: `title` (filename stem for local files, URL for remote),
+`source` (§20 semantics, verbatim), `created` (RFC3339 with offset),
+`tags` (contains `"asset"`), `mime` (sniffed), `size` (bytes), `sha256`.
+The profile `[ingest]` table gains `asset = "asset"` (rdegges maps to its
+own asset type); a profile with no asset mapping fails with the same error
+copy pattern as a missing clip mapping. Per-source `note_type` overrides
+(§28.13) do not apply to asset records — the mapping is the profile's.
+
+**The `assets:` frontmatter ledger.** The pipeline stamps an `assets:`
+list of stored paths (vault-relative for in-vault, absolute for
+CAS/reference) onto ANY note whose record carried assets — asset notes and
+clip/email notes alike. This is the single machine-readable ledger; there
+is no separate asset-location key (one ledger, one field, one reader —
+`doctor`). The field is creation-time provenance; pkms does not maintain
+it after the note is written.
+
+**Body.** One uniform `## Attachments` section renders on every note whose
+record carried assets: in-vault assets as vault-relative wikilink embeds
+(path-qualified, duplicate-basename-safe per §5), external paths as plain
+markdown links (`[name](file:///…)`). Unstored items (over-cap, §31.8) are
+listed with name, type, size, and the reason they were not stored — nothing
+is silently dropped (§23's invariant, kept).
+
+### 31.5 Pipeline: asset consumption, crash windows, undo
+
+Extends §17 step 5; ordering is load-bearing:
+
+- Assets are stored (§31.2) **before** `writer.Write`, and the `assets:`
+  field + `## Attachments` section are built from the store results.
+- `writer.Write` quarantines or errors → assets **newly stored by this
+  emit** are best-effort deleted; idempotently-reused existing assets stay
+  (another note owns them). Quarantine keeps §17.5e semantics (count,
+  continue); the quarantine JSON records the asset store paths.
+- Success → new **in-vault** asset paths are appended to the op journal
+  (§9) alongside the note path, so `pkms undo` removes a note and its
+  attachments together. CAS/reference paths are never journaled (outside
+  the vault, outside git).
+- `pkms undo` guard: before deleting a journaled asset path, scan the
+  vault index for any OTHER note whose `assets:` list references it
+  (idempotent reuse means sharing); a still-referenced asset survives the
+  undo. Scan runs at undo time — creation-time reference counts would rot.
+- Asset-store IO failure (disk full, permission) is an **execution error**
+  (§17 exit 2, run aborts) — never a quarantine; quarantine means "this
+  record is bad", not "this machine is bad".
+- Crash between asset store and ack: orphaned stored assets heal on the
+  re-run via idempotent reuse (same name + sha → no new copy); §17's
+  crash-recovery invariant is unchanged.
+- **Advisory dedup pre-check (push mode).** Before downloading or running
+  hooks, push mode checks the NaturalKey (canonical URL / file sha) against
+  the state store and vault source-id set and no-ops early — a re-pushed
+  50 MiB video must not re-download and re-transcribe just to dedup at
+  emit time. Advisory only: the §17.5 emit-time check stays authoritative.
+
+### 31.6 PDF handler
+
+- Library: `github.com/ledongthuc/pdf` (BSD-3, pure Go; pinned at
+  implementation per §25 practice). Chosen 2026-08-09: pdfcpu still ships
+  no decoded text extraction (its issue #122, open since 2019, re-verified
+  against v0.14.0); dslipak/pdf is a dormant fork; unipdf is AGPL —
+  license-incompatible with this MIT repo.
+- The library panics on malformed input by reputation and design-of-record;
+  extraction runs in its own goroutine with `recover()` **inside that
+  goroutine**, under a 20 s deadline and a 2 MiB extracted-text cap
+  enforced **during per-page accumulation** — a decompression bomb must
+  hit the cap as it inflates, not balloon unbounded before a post-hoc
+  trim. A timed-out extraction's goroutine is abandoned (its memory is
+  bounded by the caps; containment is ultimately the push-mode process
+  exit — re-judge this if extraction ever enters a long-lived pull sweep).
+- Encrypted PDFs: extraction is skipped with a one-line hint in the body.
+- Extraction success → the text is the note body (under the 2 MiB cap).
+  ANY extraction failure (panic, timeout, encrypted, garbage) → the note
+  still lands as a plain asset note with a one-line hint; the PDF itself
+  is stored per §31.2 in every case. Extraction failure is never exit 1/2.
+
+### 31.7 Media hooks (`transcribe_cmd`, `probe_cmd`)
+
+- Config: argv **arrays** in `[vaults.assets]` (a bare string is a config
+  error — §24 `password_cmd` precedent; no shell, ever). The local media
+  path (spool or original file) is appended as the final argv element.
+- Run at record-build time, **push mode only** (non-goal above), after the
+  advisory dedup pre-check and download. They run **outside the §17 source
+  deadline**, bounded only by `hook_timeout` (default `"10m"`,
+  `[vaults.assets]` override). Stdout is capped at 10 MiB (§21 body-cap
+  consistency); over-cap output is truncated with a note.
+- Output is hostile (it echoes tags from hostile media files) and is
+  neutralized: `probe_cmd` stdout lands under `## Metadata` inside a code
+  fence one backtick longer than the longest backtick run in the output;
+  `transcribe_cmd` stdout lands under `## Transcript` with wikilink/embed
+  markup neutralized (§28.9 semantics).
+- Nonzero exit or timeout → the asset note still lands, with one line
+  naming the hook and its failure. Unconfigured → the note lands with a
+  one-line hint that `transcribe_cmd`/`probe_cmd` exist. A hook can delay
+  a note, never veto one.
+
+### 31.8 IMAP attachment storage
+
+§23's "attachments are NOT stored in phase 2" is superseded. Within the
+existing caps (10 MiB/part, 25 MiB/message via §28.6, 100 parts via
+§28.5), `walkParts` buffers attachment bodies into `Record.Assets`
+`Open`-closures; they flow through §31.2 like any other asset (threshold,
+sanitizer, idempotent reuse) and appear in `assets:` + `## Attachments`
+(§31.4). An attachment over a cap is listed **unstored, with the reason**
+— the §23 nothing-silently-dropped invariant, now with storage for the
+rest. No hooks run (pull mode; non-goal above).
+
+### 31.9 `doctor` check: `asset-refs`
+
+Green sentence (§15 gate discipline): **"every asset path stamped in an
+`assets:` frontmatter list exists on disk right now."** True by
+construction of the ledger (§31.4) — the check reads only `assets:`
+fields, so it cannot be green-by-omission on notes that never carried
+assets.
+
+- Existence-only; no sha re-verification (that is a future `--verify`
+  flag if demand shows, not this check).
+- A dangling **in-vault** path is a warning: "moved or deleted" — never
+  "lost" (the vault's git history has it).
+- A dangling **external** path (CAS/reference) is reported as
+  machine-local: on any other synced device these are *expected* to be
+  absent, and the finding's copy and severity (info, not warning) say so.
+- Body wikilinks to in-vault assets are already covered by the
+  `wikilink-resolves` lint rule (verified: embeds resolve through the same
+  link index) — `asset-refs` owns only the frontmatter ledger.
+- Gate discipline: the check counts as installed only once a test has
+  observed it rejecting a seeded dangling ref (§15).
+
