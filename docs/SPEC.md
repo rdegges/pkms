@@ -1085,17 +1085,23 @@ placed by threshold:
 CAS and reference-in-place paths are **machine-local absolute paths**: the
 vault syncs, they don't. A note carrying such a path renders a dead link on
 every other device — accepted per PLAN.md's asset policy and stated here so
-it is a documented trade, not a surprise.
+it is a documented trade, not a surprise. The other half of that trade:
+CAS blobs are **never garbage-collected in this phase** — undo never
+journals them (§31.5), so an undone or abandoned note leaves its blob
+orphaned in the store, accumulating until a future `pkms gc` if demand
+shows.
 
-**Threshold default: 5 MiB** (`[vaults.assets] threshold = "5MiB"`,
-human-readable size string; a parse error names the vault in its copy).
-Deviation from PLAN.md's "default 25MB" sketch, on evidence checked
-2026-08-09: Obsidian Sync caps files at **5 MB on the Standard plan**
-(200 MB on Plus). A 25 MiB default would put 5–25 MiB files in the vault
-where Standard-plan sync silently refuses them — defeating the policy's own
-stated rationale (git bloat + sync limits). Web PDFs and email attachments
-are almost all under 5 MiB, so the common case still lands in-vault;
-Plus-plan users raise one config key.
+**Threshold default: 5 MB, decimal** (`[vaults.assets] threshold = "5MB"`
+= 5,000,000 bytes; human-readable size string, and a parse error names the
+vault in its copy). Deviation from PLAN.md's "default 25MB" sketch, on
+evidence checked 2026-08-09: Obsidian Sync caps files at **5 MB on the
+Standard plan** (200 MB on Plus). A larger default would put files in the
+vault where Standard-plan sync silently refuses them — defeating the
+policy's own stated rationale (git bloat + sync limits). The default is
+decimal `5MB`, not `5MiB`: binary would sit 5% over the cited cap and
+fail sync in exactly the 5.00–5.24 MB band the deviation exists to
+protect. Web PDFs and email attachments are almost all under 5 MB, so the
+common case still lands in-vault; Plus-plan users raise one config key.
 
 ### 31.3 `fetch.Download` (§21 additions)
 
@@ -1242,19 +1248,21 @@ rest. No hooks run (pull mode; non-goal above).
 
 ### 31.9 `doctor` check: `asset-refs`
 
-Green sentence (§15 gate discipline): **"every asset path stamped in an
-`assets:` frontmatter list exists on disk right now."** True by
-construction of the ledger (§31.4) — the check reads only `assets:`
-fields, so it cannot be green-by-omission on notes that never carried
-assets.
+Green sentence (§15 gate discipline): **"every vault-relative asset path
+stamped in an `assets:` frontmatter list exists in the vault right now."**
+True by construction of the ledger (§31.4) — the check reads only
+`assets:` fields, so it cannot be green-by-omission on notes that never
+carried assets.
 
 - Existence-only; no sha re-verification (that is a future `--verify`
   flag if demand shows, not this check).
 - A dangling **in-vault** path is a warning: "moved or deleted" — never
   "lost" (the vault's git history has it).
-- A dangling **external** path (CAS/reference) is reported as
-  machine-local: on any other synced device these are *expected* to be
-  absent, and the finding's copy and severity (info, not warning) say so.
+- External (CAS/reference-in-place) paths are **outside the green claim**:
+  they are machine-local (§31.2) and expected absent on every other
+  synced device, so their existence can never sit inside a sentence that
+  must be true on all inputs (§15). The check lists missing external
+  paths informationally; they never color the pass/fail result.
 - Body wikilinks to in-vault assets are already covered by the
   `wikilink-resolves` lint rule (verified: embeds resolve through the same
   link index) — `asset-refs` owns only the frontmatter ledger.
