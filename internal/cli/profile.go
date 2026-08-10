@@ -117,11 +117,7 @@ show the profile a vault uses.`,
 			if err != nil {
 				return err
 			}
-			view, err := buildProfileView(prof)
-			if err != nil {
-				return err
-			}
-			return renderProfileView(cmd, view, jsonOut)
+			return renderProfileView(cmd, prof, jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "machine-readable output")
@@ -189,17 +185,23 @@ func buildProfileView(p *profile.Profile) (*profileView, error) {
 	return view, nil
 }
 
-func renderProfileView(cmd *cobra.Command, view *profileView, jsonOut bool) error {
+func renderProfileView(cmd *cobra.Command, prof *profile.Profile, jsonOut bool) error {
 	out := cmd.OutOrStdout()
 	if jsonOut {
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		// A note-type schema's raw bytes must survive verbatim — Go's
-		// encoder HTML-escapes <, >, & in a RawMessage by default, which
-		// would corrupt an ejected profile whose schema uses those (e.g. a
-		// `^[^<>]*$` pattern). This output is machine-read, never HTML.
-		enc.SetEscapeHTML(false)
-		return enc.Encode(view)
+		// Serialize through the shared producer the `pkms mcp` profile_show
+		// tool also uses (§32.6). HTML escaping is off there so a note-type
+		// schema's raw bytes survive verbatim (an ejected profile's
+		// `^[^<>]*$` pattern must not become <).
+		b, err := profileJSON(prof)
+		if err != nil {
+			return err
+		}
+		_, err = out.Write(b)
+		return err
+	}
+	view, err := buildProfileView(prof)
+	if err != nil {
+		return err
 	}
 	fmt.Fprintf(out, "%s — %s (schema v%d)\n", view.Name, view.Description, view.SchemaVersion)
 	fmt.Fprintf(out, "attachments: %s\n", orNone(view.Attachments))
