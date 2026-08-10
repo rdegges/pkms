@@ -39,9 +39,14 @@ writes to a vault. Inside Claude Code, use the plugin's CLI skill instead.`,
 
 func runMCP(cmd *cobra.Command) error {
 	err := newMCPServer().Run(cmd.Context(), &mcp.StdioTransport{})
-	// A closed stdin ends the session normally (the jsonrpc2 layer reports
-	// it as an EOF-bearing "server is closing" error that does not unwrap
-	// to io.EOF). That is not a failure — exit 0. Surface anything else.
+	// Only transport-level errors reach here — tool failures return as
+	// IsError tool results, never through Run. A closed stdin ends the
+	// session normally, but the jsonrpc2 layer wraps it (via %v around an
+	// internal sentinel) so it neither is nil nor unwraps to io.EOF; we
+	// match the "EOF" text instead. That fallback also treats a truncated
+	// final frame ("unexpected EOF" — the host died mid-write) as a clean
+	// exit, which is the right call: the peer is gone either way. Genuinely
+	// malformed input still fails loudly (no "EOF" in its error → exit 2).
 	if err == nil || errors.Is(err, io.EOF) || strings.Contains(err.Error(), "EOF") {
 		return nil
 	}
