@@ -116,52 +116,77 @@ func (p Policy) storeInVault(s Source) (Stored, error) {
 		}
 		target := filepath.Join(destDir, cand)
 		rel := path.Join(p.AttachmentsDir, cand)
-		fi, err := os.Lstat(target)
-		switch {
-		case err == nil && fi.Mode().IsRegular():
-			sum, herr := hashFile(target)
-			if herr != nil {
-				return Stored{}, herr
+		// Two passes over the SAME candidate: losing the os.Link race means
+		// the name just sprang into existence — the second pass Lstats it
+		// and reuses on a content match. Advancing straight to the next
+		// suffix instead would break §31.2's idempotent-reuse promise under
+		// concurrency (two racing stores would land duplicate blobs).
+		for attempt := 0; attempt < 2; attempt++ {
+			fi, err := os.Lstat(target)
+			switch {
+			case err == nil && fi.Mode().IsRegular():
+				sum, herr := hashFile(target)
+				if herr != nil {
+					return Stored{}, herr
+				}
+				if sum == s.SHA256 {
+					return Stored{Path: rel, InVault: true, New: false}, nil
+				}
+				attempt = 2 // same name, different content → next suffix
+				continue
+			case err == nil:
+				attempt = 2 // a dir/symlink squats on the name → next suffix
+				continue
+			case !os.IsNotExist(err):
+				return Stored{}, err
 			}
-			if sum == s.SHA256 {
-				return Stored{Path: rel, InVault: true, New: false}, nil
+			linked, err := writeLinked(destDir, target, s.Open)
+			if err != nil {
+				return Stored{}, err
 			}
-			continue // same name, different content → next suffix
-		case err == nil:
-			continue // a dir/symlink squats on the name → next suffix
-		case !os.IsNotExist(err):
-			return Stored{}, err
+			if linked {
+				return Stored{Path: rel, InVault: true, New: true}, nil
+			}
+			// Lost the race: loop to re-examine this candidate.
 		}
-		linked, err := writeLinked(destDir, target, s.Open)
-		if err != nil {
-			return Stored{}, err
-		}
-		if !linked {
-			continue // lost a same-name race → re-examine the candidate
-		}
-		return Stored{Path: rel, InVault: true, New: true}, nil
 	}
 	return Stored{}, fmt.Errorf("cannot allocate attachment name for %q in %s", name, destDir)
 }
 
 // storeCAS places an over-threshold remote asset in the content-addressed
-// store: the basename IS the hash, so existence proves identity.
+// store: the basename IS the hash, so a REGULAR file there proves
+// identity. Anything else on the name (symlink, dir) is a squatter the
+// ledger must never point at — error, never fall through (SPEC §31.2).
 func (p Policy) storeCAS(s Source) (Stored, error) {
 	if err := os.MkdirAll(p.CASDir, 0o755); err != nil {
 		return Stored{}, err
 	}
 	ext := path.Ext(profile.SanitizeAssetFilename(s.Filename))
 	target := filepath.Join(p.CASDir, s.SHA256+ext)
-	if fi, err := os.Lstat(target); err == nil && fi.Mode().IsRegular() {
+	fi, err := os.Lstat(target)
+	switch {
+	case err == nil && fi.Mode().IsRegular():
 		return Stored{Path: target, InVault: false, New: false}, nil
-	} else if err != nil && !os.IsNotExist(err) {
+	case err == nil:
+		return Stored{}, fmt.Errorf("asset store path %s exists but is not a regular file; refusing to use it", target)
+	case !os.IsNotExist(err):
 		return Stored{}, err
 	}
 	linked, err := writeLinked(p.CASDir, target, s.Open)
 	if err != nil {
 		return Stored{}, err
 	}
-	// A lost race means an identical blob just landed (name = hash).
+	if !linked {
+		// Lost the race: name = hash, so an identical blob just landed —
+		// but verify it IS a blob before pointing the ledger at it.
+		fi, err := os.Lstat(target)
+		if err != nil {
+			return Stored{}, err
+		}
+		if !fi.Mode().IsRegular() {
+			return Stored{}, fmt.Errorf("asset store path %s exists but is not a regular file; refusing to use it", target)
+		}
+	}
 	return Stored{Path: target, InVault: false, New: linked}, nil
 }
 

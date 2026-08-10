@@ -111,6 +111,11 @@ func (a *Assets) validate(vaultName string) error {
 		}
 		a.MaxDownloadBytes = n
 	}
+	// The §31.3 table constraint: the download cap must exceed the
+	// threshold, or every over-threshold remote asset is unreachable.
+	if a.MaxDownloadBytes <= a.ThresholdBytes {
+		return fmt.Errorf("vault %q: [vaults.assets] max_download (%d bytes) must exceed threshold (%d bytes); over-threshold downloads would be unreachable", vaultName, a.MaxDownloadBytes, a.ThresholdBytes)
+	}
 	return nil
 }
 

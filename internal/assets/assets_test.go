@@ -169,6 +169,30 @@ func TestStoreSymlinkedAttachmentsEscapeRefused(t *testing.T) {
 	require.Empty(t, entries, "nothing written through the symlink")
 }
 
+func TestStoreCASRefusesSquatter(t *testing.T) {
+	// The CAS name is the hash, so existence normally proves identity —
+	// but only a REGULAR file counts. A symlink or dir squatting on the
+	// name must be an error, never a ledger entry (BDFL gate condition 2).
+	body := []byte("cas squatter target bytes")
+
+	t.Run("symlink", func(t *testing.T) {
+		p := policy(t, 0)
+		s := src("x.bin", body)
+		require.NoError(t, os.MkdirAll(p.CASDir, 0o755))
+		require.NoError(t, os.Symlink(t.TempDir(), filepath.Join(p.CASDir, s.SHA256+".bin")))
+		_, err := p.Store(s)
+		require.ErrorContains(t, err, "not a regular file")
+	})
+
+	t.Run("dir", func(t *testing.T) {
+		p := policy(t, 0)
+		s := src("x.bin", body)
+		require.NoError(t, os.MkdirAll(filepath.Join(p.CASDir, s.SHA256+".bin"), 0o755))
+		_, err := p.Store(s)
+		require.ErrorContains(t, err, "not a regular file")
+	})
+}
+
 func TestStoreNoAttachmentsDirConfigured(t *testing.T) {
 	p := policy(t, 100)
 	p.AttachmentsDir = ""

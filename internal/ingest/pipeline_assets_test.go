@@ -148,6 +148,19 @@ func TestUndoKeepsAssetSharedWithAnotherNote(t *testing.T) {
 	require.FileExists(t, filepath.Join(v.Path, "Inbox", "Asset 2.md"), "the other note is untouched")
 }
 
+func TestBodylessAssetNoteHasSingleBlankLineBeforeAttachments(t *testing.T) {
+	// BDFL gate condition 7: a generic asset note has no body text, so
+	// ## Attachments must sit exactly one blank line under the fence.
+	r, v := testRunner(t)
+	res, err := r.RunPush(context.Background(), assetRecord(1, "payload.bin", []byte("some bytes")))
+	require.NoError(t, err)
+
+	note, err := os.ReadFile(filepath.Join(v.Path, res.Notes[0]))
+	require.NoError(t, err)
+	require.Contains(t, string(note), "---\n\n## Attachments\n")
+	require.NotContains(t, string(note), "---\n\n\n")
+}
+
 func TestRunPushOverThresholdGoesToCAS(t *testing.T) {
 	r, v := testRunner(t)
 	r.Vault.Assets.ThresholdBytes = 4 // force the CAS branch

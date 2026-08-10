@@ -167,7 +167,14 @@ func (r *Runner) storeAssets(rec *Record) ([]assets.Stored, error) {
 		ledger[i] = s.Path
 	}
 	rec.Fields["assets"] = ledger
-	rec.Body = strings.TrimRight(rec.Body, "\n") + attachmentsSection(stored)
+	// A bodyless asset note starts straight at ## Attachments — exactly one
+	// blank line after the frontmatter fence, never two.
+	body := strings.TrimRight(rec.Body, "\n")
+	if body == "" {
+		rec.Body = attachmentsSection(stored)
+	} else {
+		rec.Body = body + "\n\n" + attachmentsSection(stored)
+	}
 	return stored, nil
 }
 
@@ -179,7 +186,7 @@ func (r *Runner) storeAssets(rec *Record) ([]assets.Stored, error) {
 // (SPEC §28.9 posture).
 func attachmentsSection(stored []assets.Stored) string {
 	var b strings.Builder
-	b.WriteString("\n\n## Attachments\n\n")
+	b.WriteString("## Attachments\n\n")
 	for _, s := range stored {
 		if s.InVault {
 			fmt.Fprintf(&b, "- ![[%s]]\n", s.Path)
