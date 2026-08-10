@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -120,10 +121,21 @@ func codePieces(md string) (fencedLines, inlineSpans []string) {
 	lines := strings.Split(md, "\n")
 	inFence := false
 	var pending string
+	flushPending := func() {
+		// A backslash-continued line with no following line (fence close or
+		// end of input) must NOT be dropped — flush it so the command it
+		// carries is still validated (fail-closed).
+		if pending != "" {
+			fencedLines = append(fencedLines, pending)
+			pending = ""
+		}
+	}
 	for _, ln := range lines {
 		if strings.HasPrefix(strings.TrimSpace(ln), "```") {
+			if inFence {
+				flushPending()
+			}
 			inFence = !inFence
-			pending = ""
 			continue
 		}
 		if inFence {
@@ -136,6 +148,7 @@ func codePieces(md string) (fencedLines, inlineSpans []string) {
 			fencedLines = append(fencedLines, joined)
 		}
 	}
+	flushPending() // unterminated fence at end of input
 	// Inline spans on non-fenced lines: `...` (single backtick, single line).
 	inFence = false
 	for _, ln := range lines {
@@ -163,24 +176,67 @@ func codePieces(md string) (fencedLines, inlineSpans []string) {
 	return fencedLines, inlineSpans
 }
 
-// invocations returns every `pkms …` command written in a document's code.
+// shellSeparators split a code line into independently-runnable commands.
+// A bad command hidden after one of these (e.g. `pkms lint && pkms
+// frobnicate`) must not ride in as a positional arg to the first.
+var shellSeparators = []string{"&&", "||", ";", " | "}
+
+func splitShellSegments(line string) []string {
+	segs := []string{line}
+	for _, sep := range shellSeparators {
+		var next []string
+		for _, s := range segs {
+			next = append(next, strings.Split(s, sep)...)
+		}
+		segs = next
+	}
+	return segs
+}
+
+var envPrefixRe = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z0-9_]*=\S* +)+`)
+
+// pkmsInvocation extracts a `pkms …` command from one shell segment, after
+// stripping a leading prompt sigil ("$ ", "% ") and env-var assignments. It
+// returns "" when the segment names no pkms command. If `pkms ` appears but
+// not at the start (an unrecognized prefix), it is still extracted from
+// `pkms` onward — never silently skipped (fail-closed).
+func pkmsInvocation(seg string) string {
+	s := strings.TrimSpace(seg)
+	s = strings.TrimPrefix(s, "$ ")
+	s = strings.TrimPrefix(s, "% ")
+	s = envPrefixRe.ReplaceAllString(s, "")
+	s = strings.TrimSpace(s)
+	if s == "pkms" || strings.HasPrefix(s, "pkms ") {
+		return s
+	}
+	if idx := strings.Index(s, "pkms "); idx >= 0 {
+		return s[idx:]
+	}
+	return ""
+}
+
+// invocations returns every `pkms …` command written in a document's code,
+// splitting compound lines and normalizing prompt/env prefixes so no bad
+// command hides from the resolver.
 func invocations(md string) []string {
 	fenced, inline := codePieces(md)
 	var out []string
-	for _, ln := range fenced {
-		t := strings.TrimSpace(ln)
+	scan := func(piece string) {
+		t := strings.TrimSpace(piece)
 		if t == "" || strings.HasPrefix(t, "#") {
-			continue // blank or comment line
+			return // blank or comment line
 		}
-		if idx := strings.Index(t, "pkms "); idx == 0 || t == "pkms" {
-			out = append(out, t)
+		for _, seg := range splitShellSegments(t) {
+			if inv := pkmsInvocation(seg); inv != "" {
+				out = append(out, inv)
+			}
 		}
 	}
+	for _, ln := range fenced {
+		scan(ln)
+	}
 	for _, sp := range inline {
-		t := strings.TrimSpace(sp)
-		if t == "pkms" || strings.HasPrefix(t, "pkms ") {
-			out = append(out, t)
-		}
+		scan(sp)
 	}
 	return out
 }
@@ -237,12 +293,36 @@ func checkPrompt(t *testing.T, name, md string, floor, banFolders bool) []string
 		fenced, inline := codePieces(md)
 		code := strings.Join(append(fenced, inline...), "\n")
 		for _, folder := range bannedFolders(t) {
-			if strings.Contains(code, folder) {
+			if containsFolderLiteral(code, folder) {
 				v = append(v, fmt.Sprintf("%s: hard-codes profile folder literal %q (read it from `pkms profile show` instead)", name, folder))
 			}
 		}
 	}
 	return v
+}
+
+// containsFolderLiteral reports whether folder appears in code as a whole
+// path segment, not merely a substring — so a banned scaffold word like
+// "Areas" flags `Areas/` or a standalone `Areas` but not `AreasOfLaw`.
+// Word boundary = the char just outside the match is not [A-Za-z0-9_].
+func containsFolderLiteral(code, folder string) bool {
+	isWord := func(b byte) bool {
+		return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+	}
+	for i := 0; ; {
+		j := strings.Index(code[i:], folder)
+		if j < 0 {
+			return false
+		}
+		start := i + j
+		end := start + len(folder)
+		leftOK := start == 0 || !isWord(code[start-1])
+		rightOK := end == len(code) || !isWord(code[end])
+		if leftOK && rightOK {
+			return true
+		}
+		i = start + 1
+	}
 }
 
 // shippedPromptFiles returns the agent and skill markdown that ships in the

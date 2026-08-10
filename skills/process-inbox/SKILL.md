@@ -39,7 +39,8 @@ pkms query --type <clip-type> --json
 #    If nothing is captured, stop: report "inbox empty", make no writes,
 #    take no snapshot.
 
-# 4. Snapshot so every move below can be undone as one operation.
+# 4. Snapshot: a git-level restore point for the whole run, so the vault's
+#    pre-run state stays recoverable (see recovery in step 7).
 pkms snapshot
 
 # 5. For each captured note, decide its destination from the profile's
@@ -53,10 +54,14 @@ pkms lint --fix
 # 6. Verify: a clean report proves every move was legal. Fix anything you
 #    broke before reporting done.
 pkms lint --json
-
-# 7. Report what moved where. If a move went wrong, undo the run:
-pkms undo last
 ```
+
+7. **Report** what moved where. To reverse a wrong move, move the note back
+   with your own file tools — you know its origin (the capture folder).
+   `pkms undo` reverts only a pkms-recorded operation (a `lint --fix` or an
+   `ingest`), not the moves you make with your file tools, so it will not
+   fix a misfiled note. The step-4 snapshot is the git-level fallback if a
+   run goes badly wrong.
 
 ## Judgment rules
 

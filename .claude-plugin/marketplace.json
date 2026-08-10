@@ -7,8 +7,9 @@
   "plugins": [
     {
       "name": "pkms",
-      "description": "Agents and skills for pkms — process your inbox and drive an Obsidian-compatible vault through deterministic, undoable primitives.",
+      "description": "Agents and skills for pkms \u2014 process your inbox and drive an Obsidian-compatible vault through deterministic, undoable primitives.",
       "source": "./"
     }
-  ]
+  ],
+  "description": "pkms agents and skills: process your inbox and drive an Obsidian-compatible vault through deterministic, undoable primitives."
 }

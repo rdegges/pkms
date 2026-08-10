@@ -2,8 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "pkms",
   "version": "0.4.0",
-  "displayName": "pkms",
-  "description": "Agents and skills that drive pkms — the deterministic vault substrate. Process your inbox, file notes, and answer questions over an Obsidian-compatible vault, all through pkms's safe, undoable primitives.",
+  "description": "Agents and skills that drive pkms \u2014 the deterministic vault substrate. Process your inbox, file notes, and answer questions over an Obsidian-compatible vault, all through pkms's safe, undoable primitives.",
   "author": {
     "name": "Randall Degges",
     "url": "https://rdegges.com"
@@ -11,5 +10,11 @@
   "homepage": "https://github.com/rdegges/pkms",
   "repository": "https://github.com/rdegges/pkms",
   "license": "MIT",
-  "keywords": ["pkms", "obsidian", "notes", "para", "vault"]
+  "keywords": [
+    "pkms",
+    "obsidian",
+    "notes",
+    "para",
+    "vault"
+  ]
 }

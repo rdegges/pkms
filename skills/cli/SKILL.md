@@ -79,9 +79,10 @@ pkms ingest <url-or-path> --json
 pkms ingest --json
 ```
 
-`pkms snapshot` commits the vault's current state so any later change can be
-undone; `pkms lint --fix` applies only unambiguous, idempotent repairs
-inside its own snapshot; `pkms undo` reverts exactly one operation's files:
+`pkms snapshot` commits the vault's current state as a git-level restore
+point; `pkms lint --fix` applies only unambiguous, idempotent repairs inside
+its own recorded operation; `pkms undo` reverts exactly one pkms-recorded
+operation's files:
 
 ```
 pkms snapshot
@@ -90,14 +91,19 @@ pkms history
 pkms undo last
 ```
 
-pkms deliberately has **no** command that moves, files, classifies, or
-rewrites a note — those are judgment calls, so they are yours to make with
-your own file tools. pkms's job is to make them safe and reversible.
+`pkms undo` reverses only a pkms-recorded operation — a `lint --fix` or an
+`ingest`. It does **not** revert notes you move or edit with your own file
+tools; reverse those yourself (you know where they came from). pkms
+deliberately has **no** command that moves, files, classifies, or rewrites a
+note — those are judgment calls, yours to make with your own tools; the
+snapshot is the git fallback if a run goes wrong.
 
 ## Safety protocol (always)
 
-1. **Snapshot before any write.** `pkms snapshot` first, so `pkms undo` can
-   reverse a mistake.
+1. **Snapshot before any write.** `pkms snapshot` records the pre-change
+   state as a git restore point you can fall back to. (It is not an undo of
+   your file-tool moves — `pkms undo` reverses only pkms-recorded operations
+   like `lint --fix` and `ingest`; reverse your own moves yourself.)
 2. **Check backlinks before a move.** `pkms query --backlinks <path>` —
    path-form links break when a note moves; know what points at it first.
 3. **Lint is the invariant after any write.** Run `pkms lint` when you're
