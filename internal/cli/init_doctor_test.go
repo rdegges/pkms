@@ -129,6 +129,60 @@ func TestDoctorFailsOnMissingVaultPath(t *testing.T) {
 	require.ErrorIs(t, err, errFindings, out)
 }
 
+// SPEC §31.9 gate discipline: the asset-refs check counts as installed
+// only once it is OBSERVED rejecting a seeded dangling reference. This
+// test seeds one and asserts the warning; without the check it would pass
+// silently (green-by-omission), so the assertion is the gate.
+func TestDoctorAssetRefsRejectsDanglingInVaultRef(t *testing.T) {
+	cfgPath := testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+	require.NoError(t, config.AppendVault(cfgPath, config.Vault{
+		Name: "seed", Path: vaultPath, Profile: "para",
+	}))
+
+	// A note whose assets: ledger points at a file that does not exist.
+	note := "---\n" +
+		"title: Clip\n" +
+		"assets:\n" +
+		"  - Attachments/ghost.pdf\n" +
+		"---\n\n## Attachments\n\n- ![[Attachments/ghost.pdf]]\n"
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "note.md"), []byte(note), 0o644))
+
+	out, err := runCLI(t, "doctor")
+	require.NoError(t, err, "a dangling in-vault ref is a warning, not a failure: %s", out)
+	require.Contains(t, out, "asset-refs")
+	require.Contains(t, out, "moved or deleted")
+
+	// A present attachment makes the check green.
+	require.NoError(t, os.MkdirAll(filepath.Join(vaultPath, "Attachments"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "Attachments", "ghost.pdf"), []byte("%PDF"), 0o644))
+	out, err = runCLI(t, "doctor")
+	require.NoError(t, err)
+	require.Contains(t, out, "every in-vault attachment exists")
+	require.NotContains(t, out, "moved or deleted")
+}
+
+// An external (absolute) asset path absent on this machine is INFO, never a
+// warning — it is expected absent on other synced devices (§31.9).
+func TestDoctorAssetRefsExternalPathIsInfoNotWarning(t *testing.T) {
+	cfgPath := testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+	require.NoError(t, config.AppendVault(cfgPath, config.Vault{
+		Name: "seed", Path: vaultPath, Profile: "para",
+	}))
+	note := "---\ntitle: Big\nassets:\n  - /nonexistent/store/deadbeef.mp4\n---\n\nbody\n"
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "big.md"), []byte(note), 0o644))
+
+	out, err := runCLI(t, "doctor")
+	require.NoError(t, err, "an absent external path never fails doctor: %s", out)
+	require.Contains(t, out, "expected on other synced devices")
+	require.NotContains(t, out, "moved or deleted", "external absence is not an in-vault dangle")
+}
+
 func TestProfileListAndEject(t *testing.T) {
 	testEnv(t)
 	out, err := runCLI(t, "profile", "list")

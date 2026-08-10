@@ -144,12 +144,28 @@ Fetches are hardened by default: private/link-local addresses are refused
 (SSRF guard on resolved IPs), redirects/sizes/times are capped, and content
 is dispatched on sniffed bytes, never on the server's Content-Type header.
 
+**Every content type lands — no refusals.** A PDF becomes a note with its
+text extracted (behind a sandboxed, killed-on-timeout subprocess, so a
+malformed file can't crash or hang the run); audio and video become asset
+notes you can enrich with your own tools via `probe_cmd`/`transcribe_cmd`
+(ffprobe, whisper — argv arrays, never a shell); anything else lands as a
+generic asset. Attachments — pushed files and email attachments alike —
+are stored by size: small ones copied into the vault's `Attachments/` and
+wikilinked, large ones content-addressed outside the vault (they bloat git
+and break Obsidian Sync). `pkms doctor` reports any attachment that has
+moved or gone missing.
+
+> Note on PDF text quality: extraction uses a pure-Go library that does not
+> yet decode subset/CID fonts (common in Word- and browser-generated PDFs);
+> those land as an asset note with the PDF stored but no extracted text. A
+> stronger extractor is tracked as a follow-up.
+
 ## Status
 
-Phases 0–2 (init, doctor, lint, snapshot/undo/history, query, ingest) are
-built and tested against a real 989-note production vault. Next up: media
-handlers (PDF, audio/video asset notes) on the phase-2 dispatch, then the
-agent layer. See `docs/PLAN.md` and `docs/SPEC.md`.
+Phases 0–2.5 (init, doctor, lint, snapshot/undo/history, query, ingest with
+PDF/audio/video/attachment handlers) are built and tested against a real
+989-note production vault. Next up: the agent layer ("process my inbox").
+See `docs/PLAN.md` and `docs/SPEC.md`.
 
 ## Development
 
