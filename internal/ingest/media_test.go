@@ -109,6 +109,42 @@ func TestRunMediaHookCapsAndNeutralizes(t *testing.T) {
 	require.Contains(t, body, "````", "inner ``` fence forces a longer outer fence")
 }
 
+// The core §31.7 contract no other test pins: the local media path is
+// appended as the FINAL argument, AFTER the configured argv flags, and the
+// hook actually receives it. A script echoes its whole argument vector; the
+// fenced probe output must show the flag then the path, in that order.
+func TestRunMediaHookAppendsLocalPathAsFinalArg(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	dir := t.TempDir()
+	script := filepath.Join(dir, "probe")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf 'ARGV:%s\\n' \"$*\"\n"), 0o755))
+
+	media := filepath.Join(dir, "x.mp4")
+	h := MediaHooks{ProbeCmd: []string{script, "-hide_banner"}, Timeout: 30 * time.Second}
+	body := mediaBody(context.Background(), h, media)
+
+	require.Contains(t, body, "ARGV:-hide_banner "+media,
+		"the media path must be appended after the argv flags, as the final arg (SPEC §31.7)")
+}
+
+// The commonest real misconfiguration: the configured hook binary is not
+// installed. runMediaHook must surface a readable "failed" hint and the note
+// must still land — never a hard error, never an empty body. Needs no shell,
+// so it exercises the failure path even where /bin/sh is absent.
+func TestMediaHookExecutableNotFoundStillLandsNote(t *testing.T) {
+	h := MediaHooks{
+		ProbeCmd: []string{"pkms-no-such-hook-binary-xyz"},
+		Timeout:  30 * time.Second,
+	}
+	body := mediaBody(context.Background(), h, "/tmp/x.mp3")
+	require.Contains(t, body, "## Metadata", "an unrunnable hook still emits its section")
+	require.Contains(t, body, "failed", "the note carries a failure hint, not a crash")
+	require.Contains(t, body, "pkms-no-such-hook-binary-xyz", "the hint names the offending command")
+	require.NotContains(t, body, "No media metadata", "a configured-but-broken hook is not the unconfigured hint")
+}
+
 func TestRunMediaHookTimeout(t *testing.T) {
 	dir := t.TempDir()
 	script := filepath.Join(dir, "slow")

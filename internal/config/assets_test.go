@@ -233,6 +233,35 @@ path = "/vaults/personal"
 	}
 }
 
+// The happy-path Load: argv arrays and a hook_timeout round-trip through
+// koanf's decode into the resolved fields the push path reads. Guards the
+// `koanf:"…"` tags — a mistyped tag would silently drop the config and every
+// media note would fall back to the unconfigured hint with no error.
+func TestLoadDecodesHookArgvAndTimeout(t *testing.T) {
+	p := writeConfig(t, `
+version = 1
+
+[defaults]
+profile = "para"
+
+[[vaults]]
+name = "personal"
+path = "/vaults/personal"
+
+  [vaults.assets]
+  probe_cmd = ["ffprobe", "-hide_banner"]
+  transcribe_cmd = ["whisper", "--model", "base"]
+  hook_timeout = "45s"
+`)
+	cfg, err := Load(p)
+	require.NoError(t, err)
+	a := cfg.Vaults[0].Assets
+	require.Equal(t, []string{"ffprobe", "-hide_banner"}, a.ProbeCmd)
+	require.Equal(t, []string{"whisper", "--model", "base"}, a.TranscribeCmd)
+	require.Equal(t, 45*time.Second, a.HookTimeoutDur,
+		"a valid hook_timeout override must reach the resolved duration field")
+}
+
 func TestLoadRejectsBadAssetThreshold(t *testing.T) {
 	p := writeConfig(t, `
 version = 1

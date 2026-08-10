@@ -262,6 +262,11 @@ func (r *Runner) PushDedupCheck(key string) (existing string, seen bool) {
 func (r *Runner) RunPush(ctx context.Context, rec Record) (*Result, error) {
 	ic := config.IngesterConfig{Type: "adhoc", Name: "adhoc", Enabled: true,
 		Timeout: config.DefaultSourceTimeout, Options: map[string]any{}}
+	// Discard any source-id set the advisory pre-check (PushDedupCheck)
+	// loaded outside the vault lock, so the authoritative run rescans the
+	// vault UNDER the lock — SPEC §31.5 promises §17's crash-repair
+	// fallback unchanged, and that scan must see a consistent tree.
+	r.sourceIDs = nil
 	return r.run(ctx, ic, oneShot{rec: rec})
 }
 
