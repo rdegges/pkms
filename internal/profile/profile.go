@@ -156,6 +156,19 @@ func (p *Profile) compileSchemas() error {
 // Schema returns the compiled JSON Schema for a note type (nil if none).
 func (p *Profile) Schema(typeName string) *jsonschema.Schema { return p.schemas[typeName] }
 
+// SchemaBytes returns a note type's raw JSON Schema file bytes, verbatim
+// (SPEC §32.2). `fsys` is unexported, so `profile show` needs this to
+// inline the schema an agent validates against exactly as the writer
+// enforces it — never a re-marshal. Returns nil when the type declares no
+// schema; an error only when a declared schema file can't be read.
+func (p *Profile) SchemaBytes(typeName string) ([]byte, error) {
+	t := p.Type(typeName)
+	if t == nil || t.Schema == "" {
+		return nil, nil
+	}
+	return fs.ReadFile(p.fsys, t.Schema)
+}
+
 // Type returns the declared type by name.
 func (p *Profile) Type(name string) *Type {
 	for i := range p.Types {
