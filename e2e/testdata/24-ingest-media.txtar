@@ -31,9 +31,16 @@ stdout 'ingested → _Inbox/.* - song\.md'
 exec pkms query --type asset --json
 stdout '"mime": "audio/mpeg"'
 
-# Re-push dedups on content hash.
+# Re-push dedups on content hash — and the §31.5 advisory pre-check means
+# the probe hook must NOT run again. probe.sh appends a line to runs.log on
+# every invocation; after the first ingest it has run once, and the re-push
+# must not grow it.
+exec sh -c 'wc -l < runs.log | tr -d " "'
+stdout '^2$'
 exec pkms ingest clip.webm
 stdout 'already ingested → _Inbox/.* - clip\.md'
+exec sh -c 'wc -l < runs.log | tr -d " "'
+stdout '^2$'
 
 -- assets.toml --
 
@@ -42,5 +49,7 @@ stdout 'already ingested → _Inbox/.* - clip\.md'
 
 -- probe.sh --
 #!/bin/sh
-# Ignores its media-path arg; emits deterministic fake metadata.
+# Ignores its media-path arg; emits deterministic fake metadata and records
+# that it ran (so the re-push test can prove the pre-check skipped it).
+echo ran >> runs.log
 printf 'codec=fake\nduration=1s\n'

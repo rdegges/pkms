@@ -89,6 +89,26 @@ func runIngestPush(cmd *cobra.Command, jsonOut bool, arg string) error {
 		Timeout:       v.Assets.HookTimeoutDur,
 	}
 
+	out := cmd.OutOrStdout()
+	printf := func(format string, a ...any) { fmt.Fprintf(out, format, a...) }
+	runner := &ingest.Runner{Vault: v, Profile: prof, Now: time.Now}
+
+	// Advisory dedup pre-check (SPEC §31.5): if this push is already
+	// ingested, skip the download and any media hooks entirely — a
+	// re-pushed remote video must not re-fetch 100 MiB and re-run a
+	// ten-minute transcribe just to no-op at emit time. The pipeline's
+	// emit-time check stays authoritative.
+	if existing, seen := runner.PushDedupCheck(ingest.PushNaturalKey(arg)); seen {
+		if jsonOut {
+			res := &ingest.Result{Source: "adhoc", Deduped: 1, Notes: []string{}, Existing: []string{existing}}
+			enc := json.NewEncoder(out)
+			enc.SetIndent("", "  ")
+			return enc.Encode(vaultIngestResult{Vault: v.Name, Sources: []*ingest.Result{res}})
+		}
+		printf("already ingested → %s\n", existing)
+		return nil
+	}
+
 	now := time.Now()
 	var rec ingest.Record
 	if strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://") {
@@ -103,10 +123,6 @@ func runIngestPush(cmd *cobra.Command, jsonOut bool, arg string) error {
 	if err != nil {
 		return err
 	}
-
-	out := cmd.OutOrStdout()
-	printf := func(format string, a ...any) { fmt.Fprintf(out, format, a...) }
-	runner := &ingest.Runner{Vault: v, Profile: prof, Now: time.Now}
 	var res *ingest.Result
 	err = withVaultLock(v, printf, func() error {
 		res, err = runner.RunPush(cmd.Context(), rec)

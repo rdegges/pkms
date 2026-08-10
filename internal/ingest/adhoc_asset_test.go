@@ -154,17 +154,43 @@ func TestFileTextKeepsTheTenMiBCap(t *testing.T) {
 	require.ErrorContains(t, err, "exceeds the 10 MiB ingest limit")
 }
 
-// PROPOSED CONTRACT (SPEC §31.5, advisory dedup pre-check) — not implemented
-// on this branch, so this is a marker rather than a failing gate. The spec
-// requires push mode to check the NaturalKey against the state store and the
-// vault source-id set BEFORE downloading, so a re-pushed 50 MiB video does
-// not re-download just to dedup at emit time. Today URLRecord downloads
-// unconditionally and the only dedup is the emit-time check in run().
-// Implementing it is a design decision (where the check lives, and how the
-// CLI reports an early no-op), so it is reported, not asserted.
-func TestProposedAdvisoryDedupPreCheckBeforeDownload(t *testing.T) {
-	t.Skip("SPEC §31.5 advisory dedup pre-check DEFERRED by BDFL ruling at the PR #5 gate " +
-		"to the hooks PR (phase-2.5 PR4), where re-transcription makes it load-bearing; " +
-		"until then the worst case is a bounded re-download on a user-initiated push and " +
-		"emit-time dedup keeps correctness. This skip is the tracking artifact.")
+// SPEC §31.5 advisory dedup pre-check (implemented in PR4). After a record
+// is ingested, PushDedupCheck reports its NaturalKey as already-seen — the
+// signal the CLI uses to skip the download and media hooks on a re-push,
+// before any expensive work. A never-seen key reports not-seen so a first
+// push proceeds.
+func TestAdvisoryDedupPreCheckReflectsIngestedState(t *testing.T) {
+	r, _ := testRunner(t)
+	rec := assetRecord(1, "clip.bin", []byte("media payload bytes"))
+
+	// Fresh key: the pre-check must not short-circuit a first push.
+	if existing, seen := r.PushDedupCheck(rec.NaturalKey); seen {
+		t.Fatalf("unseen key reported already-ingested → %q", existing)
+	}
+
+	res, err := r.RunPush(context.Background(), rec)
+	require.NoError(t, err)
+	require.Equal(t, 1, res.New)
+
+	// After ingest the same key is seen, pointing at the written note —
+	// so the CLI skips re-download and re-hooking on the next push.
+	existing, seen := r.PushDedupCheck(rec.NaturalKey)
+	require.True(t, seen, "an ingested key must report already-ingested")
+	require.Equal(t, res.Notes[0], existing)
+}
+
+// PushNaturalKey computes the pre-check key WITHOUT downloading or hashing
+// through a hook: a URL yields its canonical form, a local file its content
+// SHA-256 (identical to the key FileRecord would assign).
+func TestPushNaturalKeyMatchesRecordKey(t *testing.T) {
+	require.Equal(t, "https://example.com/a", PushNaturalKey("https://Example.com/a#frag"))
+	require.Empty(t, PushNaturalKey("ftp://example.com/x"), "non-http(s) has no cheap key")
+	require.Empty(t, PushNaturalKey("/does/not/exist"), "missing file → no key, builder errors")
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "song.mp3")
+	require.NoError(t, os.WriteFile(p, []byte{0xFF, 0xFB, 0x90, 0x00, 1, 2, 3}, 0o644))
+	rec, err := FileRecord(context.Background(), p, testTypes, noHooks, testNow)
+	require.NoError(t, err)
+	require.Equal(t, rec.NaturalKey, PushNaturalKey(p), "pre-check key equals the record's key")
 }

@@ -213,6 +213,33 @@ type Downloader interface {
 	Download(ctx context.Context, rawURL string, maxBody int64) (*fetch.Download, error)
 }
 
+// PushNaturalKey computes the dedup key a push of arg WOULD produce,
+// WITHOUT downloading (URL → canonical URL) or running any hook (file →
+// content SHA-256). It powers the §31.5 advisory pre-check. Best-effort:
+// returns "" when the key can't be computed cheaply (a bad URL, an
+// unreadable file), leaving the real builder to raise the proper error.
+func PushNaturalKey(arg string) string {
+	if strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://") {
+		u, err := url.Parse(arg)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			return ""
+		}
+		return CanonicalURL(u)
+	}
+	abs, err := filepath.Abs(arg)
+	if err != nil {
+		return ""
+	}
+	if fi, err := os.Stat(abs); err != nil || !fi.Mode().IsRegular() {
+		return ""
+	}
+	sum, err := hashFile(abs)
+	if err != nil {
+		return ""
+	}
+	return sum
+}
+
 // URLRecord fetches rawURL onto a spool through the hardened client and
 // builds the push record for the sniffed kind (SPEC §19/§20/§31.1). The
 // returned cleanup (never nil) removes the spool; call it only after the

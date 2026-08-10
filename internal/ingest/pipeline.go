@@ -221,6 +221,42 @@ func (o oneShot) Fetch(ctx context.Context, _ Cursor, emit EmitFunc) error {
 	return emit(ctx, o.rec)
 }
 
+// PushDedupCheck is the §31.5 advisory pre-check: given the NaturalKey a
+// push WOULD produce, report whether it is already ingested BEFORE the
+// caller downloads the body or runs media hooks — so a re-pushed remote
+// video never re-downloads 100 MiB and re-runs a 10-minute transcribe just
+// to no-op at emit time. Advisory only: the §17.5 emit-time check stays
+// authoritative (this pre-check takes and releases the source flock, so a
+// race between it and the real run is resolved there). Any error or a held
+// lock returns seen=false — the caller proceeds and the pipeline decides.
+func (r *Runner) PushDedupCheck(key string) (existing string, seen bool) {
+	if key == "" {
+		return "", false
+	}
+	if r.sourceIDs == nil {
+		if err := r.LoadSourceIDs(); err != nil {
+			return "", false
+		}
+	}
+	if p, ok := r.sourceIDs[key]; ok {
+		return p, true
+	}
+	statePath := paths.StateDir("state", r.Vault.Name, "adhoc.ndjson")
+	st, err := OpenState(statePath, "adhoc", "")
+	if err != nil {
+		return "", false // lock held or unreadable → let RunPush decide
+	}
+	defer func() { _ = st.Close() }()
+	// Only short-circuit when a real NOTE exists: a key that is "seen"
+	// because it was QUARANTINED has no note path, and must flow through
+	// the pipeline so the run reports it as deduped, not "already
+	// ingested → " with an empty path.
+	if p := st.NotePath(key); p != "" {
+		return p, true
+	}
+	return "", false
+}
+
 // RunPush runs one record through the full pipeline under the shared
 // "adhoc" source, so repeated pushes of the same URL/file dedup.
 func (r *Runner) RunPush(ctx context.Context, rec Record) (*Result, error) {

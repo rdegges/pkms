@@ -122,8 +122,9 @@ func (a *Assets) validate(vaultName string) error {
 	if a.MaxDownloadBytes <= a.ThresholdBytes {
 		return fmt.Errorf("vault %q: [vaults.assets] max_download (%d bytes) must exceed threshold (%d bytes); over-threshold downloads would be unreachable", vaultName, a.MaxDownloadBytes, a.ThresholdBytes)
 	}
-	// argv arrays only (koanf rejects a bare string with a type error at
-	// load); guard the present-but-empty / empty-argv[0] shapes here.
+	// A bare string is rejected against the raw TOML type in Load
+	// (rejectScalarHookCmds); here we guard the present-but-empty and
+	// empty-argv[0] shapes that survive decoding.
 	if err := validateHookArgv(vaultName, "transcribe_cmd", a.TranscribeCmd); err != nil {
 		return err
 	}
@@ -137,6 +138,38 @@ func (a *Assets) validate(vaultName string) error {
 			return fmt.Errorf("vault %q: [vaults.assets] hook_timeout %q: use a positive duration like \"10m\"", vaultName, a.HookTimeout)
 		}
 		a.HookTimeoutDur = d
+	}
+	return nil
+}
+
+// rejectScalarHookCmds inspects the RAW parsed TOML (before koanf's decode
+// coerces a scalar into a one-element slice) and rejects a bare-string
+// transcribe_cmd/probe_cmd on any vault — SPEC §31.7 makes it a config
+// error, never a silently-degraded one-arg command.
+func rejectScalarHookCmds(k *koanf.Koanf, path string) error {
+	vaultsRaw, ok := k.Get("vaults").([]any)
+	if !ok {
+		return nil
+	}
+	for _, vr := range vaultsRaw {
+		vm, ok := vr.(map[string]any)
+		if !ok {
+			continue
+		}
+		assets, ok := vm["assets"].(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := vm["name"].(string)
+		for _, key := range []string{"transcribe_cmd", "probe_cmd"} {
+			v, present := assets[key]
+			if !present {
+				continue
+			}
+			if _, isArray := v.([]any); !isArray {
+				return fmt.Errorf("config %s: vault %q: [vaults.assets] %s must be an argv array like [\"ffprobe\", \"-hide_banner\"], never a shell string", path, name, key)
+			}
+		}
 	}
 	return nil
 }
@@ -206,6 +239,14 @@ func Load(path string) (*Config, error) {
 	k := koanf.New(".")
 	if err := k.Load(file.Provider(path), toml.Parser()); err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
+	}
+	// koanf's decode coerces a scalar into a one-element slice, so
+	// transcribe_cmd/probe_cmd = "…" would silently pass as a one-arg argv.
+	// SPEC §31.7 requires a bare string to be a config error (§24
+	// password_cmd precedent), so reject it against the RAW parsed type
+	// before Unmarshal hides it.
+	if err := rejectScalarHookCmds(k, path); err != nil {
+		return nil, err
 	}
 	if err := k.Unmarshal("", cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)

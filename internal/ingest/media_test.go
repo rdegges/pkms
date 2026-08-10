@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"os"
@@ -161,4 +162,100 @@ func TestFileRecordMediaBySniff(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "video/webm", rec.Fields["mime"])
 	require.Contains(t, rec.Body, "No media metadata")
+}
+
+// capWriter is the stdout bound: it must never let more than cap bytes reach
+// the buffer, yet always claim the full write so the hook's pipe never blocks
+// (SPEC §31.7 — a hook that floods stdout cannot wedge or OOM the ingest).
+func TestCapWriterBoundsBufferButNeverBlocks(t *testing.T) {
+	var buf bytes.Buffer
+	c := &capWriter{w: &buf, cap: 4}
+
+	n, err := c.Write([]byte("hello")) // 5 bytes into a 4-byte cap
+	require.NoError(t, err)
+	require.Equal(t, 5, n, "claims the full write even when it drops the overflow")
+	require.Equal(t, "hell", buf.String(), "buffer stops exactly at the cap")
+
+	n, err = c.Write([]byte("more")) // already full: everything dropped
+	require.NoError(t, err)
+	require.Equal(t, 4, n, "still claims the full write so the hook keeps draining")
+	require.Equal(t, "hell", buf.String(), "nothing past the cap ever lands")
+	require.LessOrEqual(t, buf.Len(), 4)
+}
+
+// Both hooks configured: ## Metadata (probe, fenced) must precede ##
+// Transcript (transcribe, markup-neutralized) — the §31.7 section order, and
+// the transcript path escapes wikilink openers exactly like the probe-only
+// path does not need to (probe is fenced, transcript is inline).
+func TestMediaBodyRunsBothHooksInOrder(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	dir := t.TempDir()
+	probe := filepath.Join(dir, "probe")
+	transcribe := filepath.Join(dir, "transcribe")
+	require.NoError(t, os.WriteFile(probe, []byte("#!/bin/sh\nprintf 'codec=aac\\n'\n"), 0o755))
+	require.NoError(t, os.WriteFile(transcribe,
+		[]byte("#!/bin/sh\nprintf 'see [[secret]] and ![[img.png]]\\n'\n"), 0o755))
+
+	h := MediaHooks{
+		ProbeCmd:      []string{probe},
+		TranscribeCmd: []string{transcribe},
+		Timeout:       30 * time.Second,
+	}
+	body := mediaBody(context.Background(), h, filepath.Join(dir, "x.mp4"))
+
+	meta := strings.Index(body, "## Metadata")
+	tr := strings.Index(body, "## Transcript")
+	require.GreaterOrEqual(t, meta, 0, "metadata section present")
+	require.GreaterOrEqual(t, tr, 0, "transcript section present")
+	require.Less(t, meta, tr, "metadata must render before transcript (SPEC §31.7)")
+	require.Contains(t, body, "codec=aac")
+	require.NotContains(t, body, "![[", "transcript must not mint an embed")
+	require.Equal(t, -1, firstLiveWikilinkOpener(body[tr:]),
+		"transcript must not mint a live wikilink: %q", body[tr:])
+	require.Contains(t, body, "secret", "transcript text survives neutralization")
+}
+
+// A hook that floods stdout past the 10 MiB cap is truncated, and the note
+// says so — the §31.7/§21 body-cap invariant, exercised end-to-end (not just
+// on capWriter): the returned body carries the truncation marker.
+func TestRunMediaHookTruncationMarker(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	dir := t.TempDir()
+	flood := filepath.Join(dir, "flood")
+	// 11 MiB of printable bytes (> the 10 MiB cap). tr converts NULs so the
+	// output is not stripped away as control bytes before the marker check.
+	require.NoError(t, os.WriteFile(flood,
+		[]byte("#!/bin/sh\nhead -c 11534336 /dev/zero | tr '\\0' a\n"), 0o755))
+
+	h := MediaHooks{ProbeCmd: []string{flood}, Timeout: 30 * time.Second}
+	body := mediaBody(context.Background(), h, filepath.Join(dir, "x.mp3"))
+	require.Contains(t, body, "truncated at 10 MiB", "over-cap output is marked truncated")
+}
+
+// The remote (URL) media branch of URLRecord, uncovered by the local-file
+// e2e: a downloaded webm routes to KindMedia, lands as an asset note, and the
+// configured probe hook runs against the spooled bytes.
+func TestURLRecordMediaRunsHookOnSpool(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	dir := t.TempDir()
+	probe := filepath.Join(dir, "probe")
+	require.NoError(t, os.WriteFile(probe, []byte("#!/bin/sh\nprintf 'codec=fake\\n'\n"), 0o755))
+
+	// EBML magic → sniffs as video/webm without the extension map.
+	g := fakeDownloader{t: t, body: []byte{0x1A, 0x45, 0xDF, 0xA3, 0x01, 0, 0, 0, 'x'}}
+	h := MediaHooks{ProbeCmd: []string{probe}, Timeout: 30 * time.Second}
+
+	rec, cleanup, err := URLRecord(context.Background(), g, "https://example.com/clip.webm", testTypes, h, 0, testNow)
+	defer cleanup()
+	require.NoError(t, err)
+	require.Equal(t, "asset", rec.NoteType)
+	require.Equal(t, "video/webm", rec.Fields["mime"])
+	require.Contains(t, rec.Body, "## Metadata")
+	require.Contains(t, rec.Body, "codec=fake", "the hook ran against the spooled download")
 }
