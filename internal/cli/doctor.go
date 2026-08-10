@@ -115,7 +115,7 @@ func runDoctor(cmd *cobra.Command, jsonOut bool) error {
 		// paths are machine-local and expected absent on other devices, so
 		// they are reported informationally and never color pass/fail.
 		if profErr == nil {
-			assetRefsCheck(v.Path, prof, ok, warn, info)
+			assetRefsCheck(v.Name, v.Path, prof, ok, warn, info)
 		}
 
 		// Quarantine counts, per source (SPEC §26).
@@ -203,8 +203,7 @@ func doctorReport(cmd *cobra.Command, checks []checkResult, jsonOut bool) error 
 // assetRefsCheck implements the §31.9 doctor check. The green sentence:
 // every vault-relative asset path stamped in an `assets:` frontmatter list
 // exists in the vault right now.
-func assetRefsCheck(vaultPath string, prof *profile.Profile, ok, warn, info func(name, vault, detail string)) {
-	vaultName := filepath.Base(vaultPath)
+func assetRefsCheck(vaultName, vaultPath string, prof *profile.Profile, ok, warn, info func(name, vault, detail string)) {
 	ix, err := vault.BuildIndex(vaultPath, vault.WalkOptions{AttachmentsDir: prof.Attachments})
 	if err != nil {
 		warn("asset-refs", vaultName, "could not scan the vault: "+err.Error())
@@ -212,31 +211,40 @@ func assetRefsCheck(vaultPath string, prof *profile.Profile, ok, warn, info func
 	}
 	var inVaultMissing, externalMissing int
 	var firstInVault string
+	// checkPath stats one ledger entry, splitting in-vault vs external.
+	checkPath := func(rel, p string) {
+		if p == "" {
+			return
+		}
+		if filepath.IsAbs(p) {
+			if _, err := os.Stat(p); err != nil {
+				externalMissing++
+			}
+			return
+		}
+		if _, err := os.Stat(filepath.Join(vaultPath, filepath.FromSlash(p))); err != nil {
+			inVaultMissing++
+			if firstInVault == "" {
+				firstInVault = rel + " → " + p
+			}
+		}
+	}
 	for rel, n := range ix.Notes {
 		if n.FM == nil || n.FM.Fields == nil {
 			continue
 		}
-		list, isList := n.FM.Fields["assets"].([]any)
-		if !isList {
-			continue
-		}
-		for _, item := range list {
-			p, isStr := item.(string)
-			if !isStr || p == "" {
-				continue
-			}
-			if filepath.IsAbs(p) {
-				if _, err := os.Stat(p); err != nil {
-					externalMissing++
-				}
-				continue
-			}
-			if _, err := os.Stat(filepath.Join(vaultPath, filepath.FromSlash(p))); err != nil {
-				inVaultMissing++
-				if firstInVault == "" {
-					firstInVault = rel + " → " + p
+		// The pipeline always writes a list, but a hand-edited scalar
+		// `assets: path` is a legitimate one-entry ledger — check it too,
+		// so a dangling scalar can't report green (gates fail closed).
+		switch v := n.FM.Fields["assets"].(type) {
+		case []any:
+			for _, item := range v {
+				if p, isStr := item.(string); isStr {
+					checkPath(rel, p)
 				}
 			}
+		case string:
+			checkPath(rel, v)
 		}
 	}
 	// A dangling in-vault path is a warning ("moved or deleted", never
