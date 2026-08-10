@@ -1,0 +1,55 @@
+# Phase 20: a HOSTILE PDF through the real CLI (SPEC §31.6). hostile.pdf is
+# 19-ingest-pdf.txtar's paper.pdf with "/Type /Catalog" swapped for the
+# same-length "(![[x.png]]) 1" — a dictionary key the parser rejects, and whose
+# bytes the library echoes back inside its error text. The file length is
+# unchanged, so the xref offsets stay valid and parsing reaches the object.
+#
+# The invariant: extraction failure degrades to an asset note with a hint,
+# and NO PDF can put a live ![[...]] embed into a note body. A blockquote
+# does not disable transclusion in Obsidian, so the hint is not a shield.
+
+exec pkms init --path $WORK/vault
+
+exec pkms ingest hostile.pdf
+stdout 'ingested → _Inbox/.* - hostile\.md'
+exists $WORK/vault/Attachments/hostile.pdf
+
+# The note lands with the one-line hint (failure is never a refusal).
+exec sh -c 'grep "> Text extraction failed:" "$WORK"/vault/_Inbox/*hostile.md'
+
+# ...but the hint must not carry the attacker's embed into the vault.
+! exec sh -c 'grep -F "![[x.png]]" "$WORK"/vault/_Inbox/*hostile.md'
+
+-- hostile.pdf --
+%PDF-1.4
+1 0 obj
+<< (![[x.png]]) 1 /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 62 >>
+stream
+BT /F1 12 Tf 72 720 Td (Hello from the pkms e2e fixture) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000353 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+423
+%%EOF

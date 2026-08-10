@@ -33,6 +33,8 @@ const (
 	// KindAsset is the generic fallback: any non-page type lands as an
 	// asset note — push mode never refuses a sniffed type (SPEC §31.1).
 	KindAsset
+	// KindPDF is an asset whose text is extracted into the body (§31.6).
+	KindPDF
 )
 
 // Sniff classifies content by its bytes (SPEC §20): DetectContentType over
@@ -47,6 +49,8 @@ func Sniff(body []byte) (Kind, string) {
 		return KindHTML, sniffed
 	case strings.HasPrefix(sniffed, "text/plain"):
 		return KindText, sniffed
+	case strings.HasPrefix(sniffed, "application/pdf"):
+		return KindPDF, sniffed
 	case strings.HasPrefix(sniffed, "text/xml"):
 		probe := body
 		if len(probe) > 4096 {
@@ -236,7 +240,7 @@ func URLRecord(ctx context.Context, d Downloader, rawURL string, nt NoteTypes, m
 	}
 
 	kind, sniffed := Sniff(dl.Sniff)
-	if kind == KindAsset {
+	if kind == KindAsset || kind == KindPDF {
 		rec.NoteType, err = nt.assetType()
 		if err != nil {
 			cleanup()
@@ -244,6 +248,9 @@ func URLRecord(ctx context.Context, d Downloader, rawURL string, nt NoteTypes, m
 		}
 		rec.Fields["title"] = rawURL
 		fillAssetFields(rec.Fields, sniffed, dl.Size, dl.SHA256)
+		if kind == KindPDF {
+			rec.Body = pdfBody(dl.SpoolPath)
+		}
 		rec.Assets = []Asset{{
 			Filename: path.Base(final.Path),
 			SHA256:   dl.SHA256,
@@ -324,7 +331,7 @@ func FileRecord(fpath string, nt NoteTypes, now time.Time) (Record, error) {
 	title := strings.TrimSuffix(filepath.Base(abs), filepath.Ext(abs))
 	kind, sniffed := Sniff(head)
 
-	if kind == KindAsset {
+	if kind == KindAsset || kind == KindPDF {
 		rec.NoteType, err = nt.assetType()
 		if err != nil {
 			return Record{}, err
@@ -336,6 +343,9 @@ func FileRecord(fpath string, nt NoteTypes, now time.Time) (Record, error) {
 		rec.NaturalKey = sum
 		rec.Fields["title"] = title
 		fillAssetFields(rec.Fields, sniffed, fi.Size(), sum)
+		if kind == KindPDF {
+			rec.Body = pdfBody(abs)
+		}
 		rec.Assets = []Asset{{
 			Filename: filepath.Base(abs),
 			SHA256:   sum,

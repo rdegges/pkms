@@ -1202,23 +1202,43 @@ Extends §17 step 5; ordering is load-bearing:
 ### 31.6 PDF handler
 
 - Library: `github.com/ledongthuc/pdf` (BSD-3, pure Go; pinned at
-  implementation per §25 practice). Chosen 2026-08-09: pdfcpu still ships
-  no decoded text extraction (its issue #122, open since 2019, re-verified
-  against v0.14.0); dslipak/pdf is a dormant fork; unipdf is AGPL —
-  license-incompatible with this MIT repo.
-- The library panics on malformed input by reputation and design-of-record;
-  extraction runs in its own goroutine with `recover()` **inside that
-  goroutine**, under a 20 s deadline and a 2 MiB extracted-text cap
-  enforced **during per-page accumulation** — a decompression bomb must
-  hit the cap as it inflates, not balloon unbounded before a post-hoc
-  trim. A timed-out extraction's goroutine is abandoned (its memory is
-  bounded by the caps; containment is ultimately the push-mode process
-  exit — re-judge this if extraction ever enters a long-lived pull sweep).
+  implementation per §25 practice — v0.0.0-20250511090121-5959a4027728,
+  proxy-verified 2026-08-09; the module ships no semver tags). Chosen
+  2026-08-09: pdfcpu still ships no decoded text extraction (its issue
+  #122, open since 2019, re-verified against v0.14.0); dslipak/pdf is a
+  dormant fork; unipdf is AGPL — license-incompatible with this MIT repo.
+- The library panics on malformed input, loops forever on some inputs
+  (an observed `/Kids` self-cycle), and — decisively — `fmt.Printf`s
+  attacker-controlled bytes to the process stdout mid-parse. So extraction
+  runs **out of process**: pkms re-execs its own binary as a child
+  (selected by a fixed argv sentinel, authenticated by a per-run random
+  nonce so no inherited/attacker-set env var alone can ever select it and
+  turn an ingest into a file-write), with the child's **stdout/stderr
+  wired to `/dev/null`**. The parent enforces a 20 s deadline by **killing
+  the child** (`exec.CommandContext`) — real containment, not an abandoned
+  goroutine, and the library's debug prints can never reach `ingest
+  --json` or the TTY on any path, including the timeout. The child applies
+  the 2 MiB text cap **between pages** as it accumulates — a multi-page
+  decompression bomb stops at the cap rather than materializing whole. A
+  SINGLE page fully materializes inside the library's `GetPlainText`
+  before the check, so a single-page bomb is bounded by the child's 20 s
+  kill deadline, not the byte cap. The cap governs the extracted text
+  BEFORE bracket-escaping; escaping doubles every `[`, so the rendered
+  body can exceed the cap (bounded, never unbounded).
+- Undecodable output (subset CID / Identity-H fonts return NUL-laced glyph
+  ids — the default of Word/Chrome-era producers) is dropped **per page**:
+  a mixed document keeps the pages that decoded; an all-undecodable
+  document yields the honest "no extractable text" hint. Binary glyph ids
+  never reach a note body — notes are text files.
 - Encrypted PDFs: extraction is skipped with a one-line hint in the body.
-- Extraction success → the text is the note body (under the 2 MiB cap).
-  ANY extraction failure (panic, timeout, encrypted, garbage) → the note
-  still lands as a plain asset note with a one-line hint; the PDF itself
-  is stored per §31.2 in every case. Extraction failure is never exit 1/2.
+- Extraction success → the text is the note body (extracted text capped
+  at 2 MiB before escaping), with control bytes stripped and every `[`
+  escaped so a hostile PDF mints neither embeds (`![[`) nor graph edges
+  (`[[`). ANY extraction failure
+  (panic, timeout, encrypted, garbage) → the note still lands as a plain
+  asset note with a one-line hint, itself neutralized and capped at 512
+  bytes (the library echoes file bytes into its errors); the PDF itself is
+  stored per §31.2 in every case. Extraction failure is never exit 1/2.
 
 ### 31.7 Media hooks (`transcribe_cmd`, `probe_cmd`)
 
