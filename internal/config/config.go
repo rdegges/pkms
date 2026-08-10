@@ -84,9 +84,15 @@ const DefaultSourceTimeout = 10 * time.Minute
 type Assets struct {
 	Threshold   string `koanf:"threshold"`
 	MaxDownload string `koanf:"max_download"`
+	// TranscribeCmd/ProbeCmd are argv arrays (never shell strings, §31.7);
+	// the local media path is appended as the final argument.
+	TranscribeCmd []string `koanf:"transcribe_cmd"`
+	ProbeCmd      []string `koanf:"probe_cmd"`
+	HookTimeout   string   `koanf:"hook_timeout"`
 
-	ThresholdBytes   int64 `koanf:"-"`
-	MaxDownloadBytes int64 `koanf:"-"`
+	ThresholdBytes   int64         `koanf:"-"`
+	MaxDownloadBytes int64         `koanf:"-"`
+	HookTimeoutDur   time.Duration `koanf:"-"`
 }
 
 // DefaultAssetThreshold is 5 MB DECIMAL (SPEC §31.2): Obsidian Sync's
@@ -115,6 +121,34 @@ func (a *Assets) validate(vaultName string) error {
 	// threshold, or every over-threshold remote asset is unreachable.
 	if a.MaxDownloadBytes <= a.ThresholdBytes {
 		return fmt.Errorf("vault %q: [vaults.assets] max_download (%d bytes) must exceed threshold (%d bytes); over-threshold downloads would be unreachable", vaultName, a.MaxDownloadBytes, a.ThresholdBytes)
+	}
+	// argv arrays only (koanf rejects a bare string with a type error at
+	// load); guard the present-but-empty / empty-argv[0] shapes here.
+	if err := validateHookArgv(vaultName, "transcribe_cmd", a.TranscribeCmd); err != nil {
+		return err
+	}
+	if err := validateHookArgv(vaultName, "probe_cmd", a.ProbeCmd); err != nil {
+		return err
+	}
+	a.HookTimeoutDur = 10 * time.Minute
+	if a.HookTimeout != "" {
+		d, err := time.ParseDuration(a.HookTimeout)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("vault %q: [vaults.assets] hook_timeout %q: use a positive duration like \"10m\"", vaultName, a.HookTimeout)
+		}
+		a.HookTimeoutDur = d
+	}
+	return nil
+}
+
+// validateHookArgv rejects a present-but-unusable media hook (SPEC §31.7):
+// an empty array, or one whose executable is blank.
+func validateHookArgv(vaultName, key string, argv []string) error {
+	if argv == nil {
+		return nil
+	}
+	if len(argv) == 0 || argv[0] == "" {
+		return fmt.Errorf("vault %q: [vaults.assets] %s must be a non-empty argv array like [\"ffprobe\", \"-hide_banner\"], never a shell string", vaultName, key)
 	}
 	return nil
 }

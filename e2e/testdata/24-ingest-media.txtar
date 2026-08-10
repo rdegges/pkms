@@ -1,0 +1,46 @@
+# Phase 24: the media handler (SPEC §31.7). A pushed audio/video file lands
+# as an asset note; with probe_cmd configured, its output fills ## Metadata;
+# unconfigured, the note still lands with a hint. Hooks are push-only and
+# shell-free (argv arrays).
+#
+# The media fixtures need raw magic bytes, so the harness writes them with
+# printf: clip.webm gets the EBML header (sniffs as video/webm — no
+# extension map needed); song.mp3 gets an MPEG frame-sync with no ID3
+# (sniffs as octet-stream, reclassified by extension — SPEC §31.1).
+
+exec pkms init --path $WORK/vault
+exec sh -c 'cat assets.toml >> "$PKMS_CONFIG"'
+chmod 0755 probe.sh
+exec sh -c 'printf "\032\105\337\243\001\000\000\000fake webm body" > clip.webm'
+exec sh -c 'printf "\377\373\220\000fake mp3 frame body here" > song.mp3'
+
+# A sniff-detected media file, with a configured probe hook.
+exec pkms ingest clip.webm
+stdout 'ingested → _Inbox/.* - clip\.md'
+exists $WORK/vault/Attachments/clip.webm
+exec sh -c 'grep -F "## Metadata" "$WORK"/vault/_Inbox/*clip.md'
+exec sh -c 'grep -F "codec=fake" "$WORK"/vault/_Inbox/*clip.md'
+
+# The asset contract fields (§31.4).
+exec pkms query --type asset --json
+stdout '"mime": "video/webm"'
+
+# An extension-reclassified .mp3 (octet-stream bytes) also lands as media.
+exec pkms ingest song.mp3
+stdout 'ingested → _Inbox/.* - song\.md'
+exec pkms query --type asset --json
+stdout '"mime": "audio/mpeg"'
+
+# Re-push dedups on content hash.
+exec pkms ingest clip.webm
+stdout 'already ingested → _Inbox/.* - clip\.md'
+
+-- assets.toml --
+
+  [vaults.assets]
+  probe_cmd = ["./probe.sh"]
+
+-- probe.sh --
+#!/bin/sh
+# Ignores its media-path arg; emits deterministic fake metadata.
+printf 'codec=fake\nduration=1s\n'

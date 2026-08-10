@@ -1062,9 +1062,14 @@ over the first 512 bytes (§20).
 **Extension reclassification (local files only).** A local file sniffing
 `application/octet-stream` may be reclassified by a fixed in-code extension
 map. The map admits an entry ONLY with an accompanying table test proving
-`DetectContentType` misses that container (candidates to try: mp3 without
-ID3, m4a, mov, mkv, avi, flac — each admitted or dropped on test evidence,
-never on assumption). Remote URLs never consult the map: the filename is
+`DetectContentType` misses that container. Admitted on evidence
+(2026-08-09, `TestMediaExtMapEntriesAreProvenMissniffs`): `.mp3` (a bare
+MPEG frame-sync with no ID3 tag), `.m4a`, `.mp4`, `.m4v`, `.mov`, `.flac`.
+DROPPED because the sniffer already classifies them (so an extension entry
+would be dead weight, `TestMediaExtMapExcludesSniffableContainers`): `.avi`
+(→ `video/avi`), `.mkv`/`.webm` (→ `video/webm`), `.ogg` (→
+`application/ogg`), `.wav` (→ `audio/wave`), and ID3-tagged `.mp3` (→
+`audio/mpeg`). Remote URLs never consult the map: the filename is
 server-controlled, and a wrong sniff still lands safely as a generic asset.
 
 ### 31.2 Asset storage policy

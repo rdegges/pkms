@@ -85,6 +85,9 @@ func TestHTMLToMarkdownLatin1(t *testing.T) {
 
 var testTypes = NoteTypes{ProfileName: "para", Clip: "clip", Asset: "asset"}
 
+// noHooks is the push-builder default in tests: no media hooks configured.
+var noHooks = MediaHooks{}
+
 type fakeDownloader struct {
 	t        *testing.T
 	body     []byte
@@ -123,7 +126,7 @@ func (f fakeDownloader) Download(_ context.Context, rawURL string, _ int64) (*fe
 func TestURLRecord(t *testing.T) {
 	g := fakeDownloader{t: t, body: []byte(`<html><head><title>Hello World</title></head><body><article><p>Enough article content to extract for the record body goes right here.</p></article></body></html>`)}
 
-	rec, cleanup, err := URLRecord(context.Background(), g, "https://Example.com/post#sec", testTypes, 0, testNow)
+	rec, cleanup, err := URLRecord(context.Background(), g, "https://Example.com/post#sec", testTypes, noHooks, 0, testNow)
 	defer cleanup()
 	require.NoError(t, err)
 	require.Equal(t, "https://example.com/post", rec.NaturalKey, "canonicalized key")
@@ -142,7 +145,7 @@ func TestURLRecordRecordsRedirect(t *testing.T) {
 		body:     []byte(`<html><head><title>T</title></head><body><article><p>Redirected content body with sufficient length for extraction to work.</p></article></body></html>`),
 		finalURL: "https://example.com/final",
 	}
-	rec, cleanup, err := URLRecord(context.Background(), g, "https://example.com/short", testTypes, 0, testNow)
+	rec, cleanup, err := URLRecord(context.Background(), g, "https://example.com/short", testTypes, noHooks, 0, testNow)
 	defer cleanup()
 	require.NoError(t, err)
 	require.Equal(t, "https://example.com/short", rec.Fields["source"])
@@ -150,7 +153,7 @@ func TestURLRecordRecordsRedirect(t *testing.T) {
 }
 
 func TestURLRecordRejectsNonHTTP(t *testing.T) {
-	_, cleanup, err := URLRecord(context.Background(), fakeDownloader{t: t}, "ftp://example.com/x", testTypes, 0, testNow)
+	_, cleanup, err := URLRecord(context.Background(), fakeDownloader{t: t}, "ftp://example.com/x", testTypes, noHooks, 0, testNow)
 	defer cleanup()
 	require.ErrorContains(t, err, "not an http(s) URL")
 }
@@ -160,7 +163,7 @@ func TestURLRecordAsset(t *testing.T) {
 	// gone: a binary type now builds an asset record (SPEC §31.1).
 	body := []byte("%PDF-1.5 pretend pdf bytes")
 	g := fakeDownloader{t: t, body: body}
-	rec, cleanup, err := URLRecord(context.Background(), g, "https://example.com/doc.pdf", testTypes, 0, testNow)
+	rec, cleanup, err := URLRecord(context.Background(), g, "https://example.com/doc.pdf", testTypes, noHooks, 0, testNow)
 	defer cleanup()
 	require.NoError(t, err)
 	require.Equal(t, "asset", rec.NoteType)
@@ -184,7 +187,7 @@ func TestURLRecordAsset(t *testing.T) {
 func TestURLRecordAssetWithoutMapping(t *testing.T) {
 	g := fakeDownloader{t: t, body: []byte("%PDF-1.5 pretend pdf bytes")}
 	nt := NoteTypes{ProfileName: "bare", Clip: "clip"}
-	_, cleanup, err := URLRecord(context.Background(), g, "https://example.com/doc.pdf", nt, 0, testNow)
+	_, cleanup, err := URLRecord(context.Background(), g, "https://example.com/doc.pdf", nt, noHooks, 0, testNow)
 	defer cleanup()
 	require.ErrorContains(t, err, `profile "bare" declares no asset note type`)
 	require.ErrorContains(t, err, `asset = "<note type for ingested binaries>"`)
@@ -195,7 +198,7 @@ func TestFileRecordText(t *testing.T) {
 	p := filepath.Join(dir, "notes.md")
 	require.NoError(t, os.WriteFile(p, []byte("# My Notes\n\nSome text.\n"), 0o644))
 
-	rec, err := FileRecord(p, testTypes, testNow)
+	rec, err := FileRecord(context.Background(), p, testTypes, noHooks, testNow)
 	require.NoError(t, err)
 	require.Len(t, rec.NaturalKey, 64, "content sha256 hex")
 	require.Equal(t, "notes", rec.Fields["title"])
@@ -205,7 +208,7 @@ func TestFileRecordText(t *testing.T) {
 	// Same content, different path → same key (content-addressed dedup).
 	p2 := filepath.Join(dir, "copy.md")
 	require.NoError(t, os.WriteFile(p2, []byte("# My Notes\n\nSome text.\n"), 0o644))
-	rec2, err := FileRecord(p2, testTypes, testNow)
+	rec2, err := FileRecord(context.Background(), p2, testTypes, noHooks, testNow)
 	require.NoError(t, err)
 	require.Equal(t, rec.NaturalKey, rec2.NaturalKey)
 }
@@ -216,7 +219,7 @@ func TestFileRecordAsset(t *testing.T) {
 	p := filepath.Join(dir, "shot.png")
 	require.NoError(t, os.WriteFile(p, body, 0o644))
 
-	rec, err := FileRecord(p, testTypes, testNow)
+	rec, err := FileRecord(context.Background(), p, testTypes, noHooks, testNow)
 	require.NoError(t, err)
 	require.Equal(t, "asset", rec.NoteType)
 	require.Equal(t, "shot", rec.Fields["title"], "local asset titles are the filename stem")
@@ -229,7 +232,7 @@ func TestFileRecordAsset(t *testing.T) {
 }
 
 func TestFileRecordMissing(t *testing.T) {
-	_, err := FileRecord(filepath.Join(t.TempDir(), "nope.md"), testTypes, testNow)
+	_, err := FileRecord(context.Background(), filepath.Join(t.TempDir(), "nope.md"), testTypes, noHooks, testNow)
 	require.ErrorContains(t, err, "not an http(s) URL and not an existing file")
 }
 

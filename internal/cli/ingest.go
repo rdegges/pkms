@@ -81,17 +81,24 @@ func runIngestPush(cmd *cobra.Command, jsonOut bool, arg string) error {
 		return err
 	}
 	nt := ingest.NoteTypes{ProfileName: prof.Name, Clip: prof.Ingest.Clip, Asset: prof.Ingest.Asset}
+	// Media hooks are PUSH-ONLY (SPEC §31.7): cron must never run a
+	// ten-minute user command against a hostile pull attachment.
+	hooks := ingest.MediaHooks{
+		TranscribeCmd: v.Assets.TranscribeCmd,
+		ProbeCmd:      v.Assets.ProbeCmd,
+		Timeout:       v.Assets.HookTimeoutDur,
+	}
 
 	now := time.Now()
 	var rec ingest.Record
 	if strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://") {
 		var cleanup func()
-		rec, cleanup, err = ingest.URLRecord(cmd.Context(), fetch.New(), arg, nt, v.Assets.MaxDownloadBytes, now)
+		rec, cleanup, err = ingest.URLRecord(cmd.Context(), fetch.New(), arg, nt, hooks, v.Assets.MaxDownloadBytes, now)
 		// The spool must outlive the pipeline run — the record's asset
 		// reader streams from it (SPEC §31.3).
 		defer cleanup()
 	} else {
-		rec, err = ingest.FileRecord(arg, nt, now)
+		rec, err = ingest.FileRecord(cmd.Context(), arg, nt, hooks, now)
 	}
 	if err != nil {
 		return err

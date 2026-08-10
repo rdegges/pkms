@@ -35,6 +35,9 @@ const (
 	KindAsset
 	// KindPDF is an asset whose text is extracted into the body (§31.6).
 	KindPDF
+	// KindMedia is an audio/video asset; its body comes from the §31.7
+	// probe_cmd/transcribe_cmd hooks (push mode only).
+	KindMedia
 )
 
 // Sniff classifies content by its bytes (SPEC §20): DetectContentType over
@@ -51,6 +54,8 @@ func Sniff(body []byte) (Kind, string) {
 		return KindText, sniffed
 	case strings.HasPrefix(sniffed, "application/pdf"):
 		return KindPDF, sniffed
+	case isMediaMIME(sniffed):
+		return KindMedia, sniffed
 	case strings.HasPrefix(sniffed, "text/xml"):
 		probe := body
 		if len(probe) > 4096 {
@@ -212,7 +217,7 @@ type Downloader interface {
 // builds the push record for the sniffed kind (SPEC §19/§20/§31.1). The
 // returned cleanup (never nil) removes the spool; call it only after the
 // record's assets have been consumed by the pipeline.
-func URLRecord(ctx context.Context, d Downloader, rawURL string, nt NoteTypes, maxDownload int64, now time.Time) (Record, func(), error) {
+func URLRecord(ctx context.Context, d Downloader, rawURL string, nt NoteTypes, hooks MediaHooks, maxDownload int64, now time.Time) (Record, func(), error) {
 	noop := func() {}
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
@@ -240,7 +245,7 @@ func URLRecord(ctx context.Context, d Downloader, rawURL string, nt NoteTypes, m
 	}
 
 	kind, sniffed := Sniff(dl.Sniff)
-	if kind == KindAsset || kind == KindPDF {
+	if kind == KindAsset || kind == KindPDF || kind == KindMedia {
 		rec.NoteType, err = nt.assetType()
 		if err != nil {
 			cleanup()
@@ -248,8 +253,11 @@ func URLRecord(ctx context.Context, d Downloader, rawURL string, nt NoteTypes, m
 		}
 		rec.Fields["title"] = rawURL
 		fillAssetFields(rec.Fields, sniffed, dl.Size, dl.SHA256)
-		if kind == KindPDF {
+		switch kind {
+		case KindPDF:
 			rec.Body = pdfBody(dl.SpoolPath)
+		case KindMedia:
+			rec.Body = mediaBody(ctx, hooks, dl.SpoolPath)
 		}
 		rec.Assets = []Asset{{
 			Filename: path.Base(final.Path),
@@ -301,7 +309,7 @@ func URLRecord(ctx context.Context, d Downloader, rawURL string, nt NoteTypes, m
 // whole-read under the parse cap; asset kinds are streamed and never
 // size-capped — the threshold decides placement, not admissibility
 // (SPEC §31.3).
-func FileRecord(fpath string, nt NoteTypes, now time.Time) (Record, error) {
+func FileRecord(ctx context.Context, fpath string, nt NoteTypes, hooks MediaHooks, now time.Time) (Record, error) {
 	abs, err := filepath.Abs(fpath)
 	if err != nil {
 		return Record{}, err
@@ -330,8 +338,16 @@ func FileRecord(fpath string, nt NoteTypes, now time.Time) (Record, error) {
 	}
 	title := strings.TrimSuffix(filepath.Base(abs), filepath.Ext(abs))
 	kind, sniffed := Sniff(head)
+	// Extension reclassification (LOCAL files only, SPEC §31.1): a
+	// container the sniffer misses to octet-stream is routed to the media
+	// handler by its proven extension.
+	if kind == KindAsset && sniffed == "application/octet-stream" {
+		if m := mediaMIMEForLocalExt(abs); m != "" {
+			kind, sniffed = KindMedia, m
+		}
+	}
 
-	if kind == KindAsset || kind == KindPDF {
+	if kind == KindAsset || kind == KindPDF || kind == KindMedia {
 		rec.NoteType, err = nt.assetType()
 		if err != nil {
 			return Record{}, err
@@ -343,8 +359,11 @@ func FileRecord(fpath string, nt NoteTypes, now time.Time) (Record, error) {
 		rec.NaturalKey = sum
 		rec.Fields["title"] = title
 		fillAssetFields(rec.Fields, sniffed, fi.Size(), sum)
-		if kind == KindPDF {
+		switch kind {
+		case KindPDF:
 			rec.Body = pdfBody(abs)
+		case KindMedia:
+			rec.Body = mediaBody(ctx, hooks, abs)
 		}
 		rec.Assets = []Asset{{
 			Filename: filepath.Base(abs),

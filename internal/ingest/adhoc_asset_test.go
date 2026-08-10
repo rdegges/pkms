@@ -33,7 +33,7 @@ func TestURLAssetFilenameFromOddURLShapes(t *testing.T) {
 	for _, raw := range urls {
 		t.Run(raw, func(t *testing.T) {
 			g := fakeDownloader{t: t, body: body}
-			rec, cleanup, err := URLRecord(context.Background(), g, raw, testTypes, 0, testNow)
+			rec, cleanup, err := URLRecord(context.Background(), g, raw, testTypes, noHooks, 0, testNow)
 			defer cleanup()
 			require.NoError(t, err, "push mode never refuses a sniffed type (SPEC §31.1)")
 			require.Equal(t, "asset", rec.NoteType)
@@ -74,7 +74,7 @@ func TestURLAssetKeepsSourceVerbatimAcrossRedirect(t *testing.T) {
 		body:     []byte("%PDF-1.5 payload"),
 		finalURL: "https://cdn.example.net/blob/9f8e.pdf",
 	}
-	rec, cleanup, err := URLRecord(context.Background(), g, "https://example.com/dl?id=7", testTypes, 0, testNow)
+	rec, cleanup, err := URLRecord(context.Background(), g, "https://example.com/dl?id=7", testTypes, noHooks, 0, testNow)
 	defer cleanup()
 	require.NoError(t, err)
 	require.Equal(t, "https://example.com/dl?id=7", rec.Fields["source"], "source is verbatim")
@@ -92,7 +92,7 @@ func TestAssetMimeStripsCharsetParameter(t *testing.T) {
 	p := filepath.Join(dir, "doc.txt")
 	require.NoError(t, os.WriteFile(p, []byte{0xff, 0xfe, 'h', 0, 'i', 0}, 0o644))
 
-	rec, err := FileRecord(p, testTypes, testNow)
+	rec, err := FileRecord(context.Background(), p, testTypes, noHooks, testNow)
 	require.NoError(t, err)
 	if rec.NoteType == "asset" {
 		mime, _ := rec.Fields["mime"].(string)
@@ -112,9 +112,9 @@ func TestFileAssetKeyIsContentHash(t *testing.T) {
 	require.NoError(t, os.WriteFile(a, body, 0o644))
 	require.NoError(t, os.WriteFile(b, body, 0o644))
 
-	ra, err := FileRecord(a, testTypes, testNow)
+	ra, err := FileRecord(context.Background(), a, testTypes, noHooks, testNow)
 	require.NoError(t, err)
-	rb, err := FileRecord(b, testTypes, testNow)
+	rb, err := FileRecord(context.Background(), b, testTypes, noHooks, testNow)
 	require.NoError(t, err)
 
 	sum := sha256.Sum256(body)
@@ -137,7 +137,7 @@ func TestFileAssetHasNoSizeCap(t *testing.T) {
 	copy(buf, []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
 	require.NoError(t, os.WriteFile(p, buf, 0o644))
 
-	rec, err := FileRecord(p, testTypes, testNow)
+	rec, err := FileRecord(context.Background(), p, testTypes, noHooks, testNow)
 	require.NoError(t, err, "an over-10-MiB binary is admissible (SPEC §31.3)")
 	require.Equal(t, "asset", rec.NoteType)
 	require.Equal(t, int64(len(buf)), rec.Assets[0].Size)
@@ -150,7 +150,7 @@ func TestFileTextKeepsTheTenMiBCap(t *testing.T) {
 	p := filepath.Join(dir, "huge.txt")
 	require.NoError(t, os.WriteFile(p, []byte(strings.Repeat("a", fetch.MaxHTMLBody+1)), 0o644))
 
-	_, err := FileRecord(p, testTypes, testNow)
+	_, err := FileRecord(context.Background(), p, testTypes, noHooks, testNow)
 	require.ErrorContains(t, err, "exceeds the 10 MiB ingest limit")
 }
 

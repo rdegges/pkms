@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -217,7 +218,7 @@ func TestFileRecordPDFExtractsBody(t *testing.T) {
 	p := filepath.Join(dir, "paper.pdf")
 	require.NoError(t, os.WriteFile(p, buildMinimalPDF("Deterministic body text"), 0o644))
 
-	rec, err := FileRecord(p, testTypes, testNow)
+	rec, err := FileRecord(context.Background(), p, testTypes, noHooks, testNow)
 	require.NoError(t, err)
 	require.Equal(t, "asset", rec.NoteType)
 	require.Equal(t, "application/pdf", rec.Fields["mime"])
@@ -227,7 +228,7 @@ func TestFileRecordPDFExtractsBody(t *testing.T) {
 
 func TestURLRecordPDFExtractsBody(t *testing.T) {
 	g := fakeDownloader{t: t, body: buildMinimalPDF("Remote PDF text here")}
-	rec, cleanup, err := URLRecord(t.Context(), g, "https://example.com/paper.pdf", testTypes, 0, testNow)
+	rec, cleanup, err := URLRecord(t.Context(), g, "https://example.com/paper.pdf", testTypes, noHooks, 0, testNow)
 	defer cleanup()
 	require.NoError(t, err)
 	require.Equal(t, "asset", rec.NoteType)
