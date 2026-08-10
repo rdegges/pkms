@@ -17,12 +17,13 @@ import (
 	"github.com/rdegges/pkms/internal/gitx"
 	"github.com/rdegges/pkms/internal/paths"
 	"github.com/rdegges/pkms/internal/profile"
+	"github.com/rdegges/pkms/internal/vault"
 )
 
 type checkResult struct {
 	Name   string `json:"name"`
 	Vault  string `json:"vault,omitempty"`
-	Status string `json:"status"` // ok | warn | fail
+	Status string `json:"status"` // ok | info | warn | fail
 	Detail string `json:"detail,omitempty"`
 }
 
@@ -42,6 +43,7 @@ func newDoctorCmd() *cobra.Command {
 func runDoctor(cmd *cobra.Command, jsonOut bool) error {
 	var checks []checkResult
 	ok := func(name, vault, detail string) { checks = append(checks, checkResult{name, vault, "ok", detail}) }
+	info := func(name, vault, detail string) { checks = append(checks, checkResult{name, vault, "info", detail}) }
 	warn := func(name, vault, detail string) { checks = append(checks, checkResult{name, vault, "warn", detail}) }
 	fail := func(name, vault, detail string) { checks = append(checks, checkResult{name, vault, "fail", detail}) }
 
@@ -87,8 +89,9 @@ func runDoctor(cmd *cobra.Command, jsonOut bool) error {
 			ok("vault-writable", v.Name, "")
 		}
 
-		if _, err := profile.Load(v.Profile); err != nil {
-			fail("profile", v.Name, err.Error())
+		prof, profErr := profile.Load(v.Profile)
+		if profErr != nil {
+			fail("profile", v.Name, profErr.Error())
 		} else {
 			ok("profile", v.Name, v.Profile)
 		}
@@ -103,6 +106,16 @@ func runDoctor(cmd *cobra.Command, jsonOut bool) error {
 			warn("vault-git", v.Name, "merge/rebase in progress; snapshots will skip until resolved")
 		default:
 			ok("vault-git", v.Name, "")
+		}
+
+		// asset-refs (SPEC §31.9): every vault-relative path stamped in an
+		// `assets:` frontmatter list must exist in the vault right now. The
+		// check reads ONLY `assets:` fields, so a note that never carried
+		// assets can't make it green-by-omission. External (CAS/reference)
+		// paths are machine-local and expected absent on other devices, so
+		// they are reported informationally and never color pass/fail.
+		if profErr == nil {
+			assetRefsCheck(v.Name, v.Path, prof, ok, warn, info)
 		}
 
 		// Quarantine counts, per source (SPEC §26).
@@ -168,7 +181,7 @@ func doctorReport(cmd *cobra.Command, checks []checkResult, jsonOut bool) error 
 		}
 	} else {
 		for _, c := range checks {
-			mark := map[string]string{"ok": "✓", "warn": "!", "fail": "✗"}[c.Status]
+			mark := map[string]string{"ok": "✓", "info": "i", "warn": "!", "fail": "✗"}[c.Status]
 			scope := c.Name
 			if c.Vault != "" {
 				scope = c.Vault + ": " + c.Name
@@ -179,12 +192,73 @@ func doctorReport(cmd *cobra.Command, checks []checkResult, jsonOut bool) error 
 				fmt.Fprintf(out, "%s %s\n", mark, scope)
 			}
 		}
-		fmt.Fprintf(out, "\n%d ok, %d warnings, %d failures\n", counts["ok"], counts["warn"], counts["fail"])
+		fmt.Fprintf(out, "\n%d ok, %d info, %d warnings, %d failures\n", counts["ok"], counts["info"], counts["warn"], counts["fail"])
 	}
 	if counts["fail"] > 0 {
 		return errFindings
 	}
 	return nil
+}
+
+// assetRefsCheck implements the §31.9 doctor check. The green sentence:
+// every vault-relative asset path stamped in an `assets:` frontmatter list
+// exists in the vault right now.
+func assetRefsCheck(vaultName, vaultPath string, prof *profile.Profile, ok, warn, info func(name, vault, detail string)) {
+	ix, err := vault.BuildIndex(vaultPath, vault.WalkOptions{AttachmentsDir: prof.Attachments})
+	if err != nil {
+		warn("asset-refs", vaultName, "could not scan the vault: "+err.Error())
+		return
+	}
+	var inVaultMissing, externalMissing int
+	var firstInVault string
+	// checkPath stats one ledger entry, splitting in-vault vs external.
+	checkPath := func(rel, p string) {
+		if p == "" {
+			return
+		}
+		if filepath.IsAbs(p) {
+			if _, err := os.Stat(p); err != nil {
+				externalMissing++
+			}
+			return
+		}
+		if _, err := os.Stat(filepath.Join(vaultPath, filepath.FromSlash(p))); err != nil {
+			inVaultMissing++
+			if firstInVault == "" {
+				firstInVault = rel + " → " + p
+			}
+		}
+	}
+	for rel, n := range ix.Notes {
+		if n.FM == nil || n.FM.Fields == nil {
+			continue
+		}
+		// The pipeline always writes a list, but a hand-edited scalar
+		// `assets: path` is a legitimate one-entry ledger — check it too,
+		// so a dangling scalar can't report green (gates fail closed).
+		switch v := n.FM.Fields["assets"].(type) {
+		case []any:
+			for _, item := range v {
+				if p, isStr := item.(string); isStr {
+					checkPath(rel, p)
+				}
+			}
+		case string:
+			checkPath(rel, v)
+		}
+	}
+	// A dangling in-vault path is a warning ("moved or deleted", never
+	// "lost" — the vault's git history has it).
+	if inVaultMissing > 0 {
+		warn("asset-refs", vaultName, fmt.Sprintf("%d in-vault attachment(s) moved or deleted (e.g. %s)", inVaultMissing, firstInVault))
+	} else {
+		ok("asset-refs", vaultName, "every in-vault attachment exists")
+	}
+	// External paths are machine-local (§31.2): absent on another synced
+	// device is EXPECTED, so it is info, never a warning.
+	if externalMissing > 0 {
+		info("asset-refs", vaultName, fmt.Sprintf("%d external asset path(s) not present on this machine (expected on other synced devices)", externalMissing))
+	}
 }
 
 func writableDir(dir string) error {

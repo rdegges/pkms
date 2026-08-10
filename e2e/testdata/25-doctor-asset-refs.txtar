@@ -1,0 +1,24 @@
+# Phase 25: `pkms doctor` asset-refs check (SPEC §31.9). After ingesting a
+# binary (which stores an attachment and stamps assets:), doctor reports the
+# in-vault attachment as present. Delete the attachment and doctor warns
+# "moved or deleted" — without failing (git history still has it).
+
+exec pkms init --path $WORK/vault
+
+exec pkms ingest report.pdf
+stdout 'ingested → _Inbox/.* - report\.md'
+exists $WORK/vault/Attachments/report.pdf
+
+# Green: the stamped in-vault attachment exists.
+exec pkms doctor
+stdout 'asset-refs'
+stdout 'every in-vault attachment exists'
+
+# Remove the attachment behind the note's back → a warning, not a failure.
+exec rm $WORK/vault/Attachments/report.pdf
+exec pkms doctor
+stdout 'moved or deleted'
+
+-- report.pdf --
+%PDF-1.5
+fake pdf payload

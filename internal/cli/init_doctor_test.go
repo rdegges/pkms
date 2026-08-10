@@ -129,6 +129,191 @@ func TestDoctorFailsOnMissingVaultPath(t *testing.T) {
 	require.ErrorIs(t, err, errFindings, out)
 }
 
+// SPEC §31.9 gate discipline: the asset-refs check counts as installed
+// only once it is OBSERVED rejecting a seeded dangling reference. This
+// test seeds one and asserts the warning; without the check it would pass
+// silently (green-by-omission), so the assertion is the gate.
+func TestDoctorAssetRefsRejectsDanglingInVaultRef(t *testing.T) {
+	cfgPath := testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+	require.NoError(t, config.AppendVault(cfgPath, config.Vault{
+		Name: "seed", Path: vaultPath, Profile: "para",
+	}))
+
+	// A note whose assets: ledger points at a file that does not exist.
+	note := "---\n" +
+		"title: Clip\n" +
+		"assets:\n" +
+		"  - Attachments/ghost.pdf\n" +
+		"---\n\n## Attachments\n\n- ![[Attachments/ghost.pdf]]\n"
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "note.md"), []byte(note), 0o644))
+
+	out, err := runCLI(t, "doctor")
+	require.NoError(t, err, "a dangling in-vault ref is a warning, not a failure: %s", out)
+	require.Contains(t, out, "asset-refs")
+	require.Contains(t, out, "moved or deleted")
+
+	// A present attachment makes the check green.
+	require.NoError(t, os.MkdirAll(filepath.Join(vaultPath, "Attachments"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "Attachments", "ghost.pdf"), []byte("%PDF"), 0o644))
+	out, err = runCLI(t, "doctor")
+	require.NoError(t, err)
+	require.Contains(t, out, "every in-vault attachment exists")
+	require.NotContains(t, out, "moved or deleted")
+}
+
+// An external (absolute) asset path absent on this machine is INFO, never a
+// warning — it is expected absent on other synced devices (§31.9).
+func TestDoctorAssetRefsExternalPathIsInfoNotWarning(t *testing.T) {
+	cfgPath := testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+	require.NoError(t, config.AppendVault(cfgPath, config.Vault{
+		Name: "seed", Path: vaultPath, Profile: "para",
+	}))
+	note := "---\ntitle: Big\nassets:\n  - /nonexistent/store/deadbeef.mp4\n---\n\nbody\n"
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "big.md"), []byte(note), 0o644))
+
+	out, err := runCLI(t, "doctor")
+	require.NoError(t, err, "an absent external path never fails doctor: %s", out)
+	require.Contains(t, out, "expected on other synced devices")
+	require.NotContains(t, out, "moved or deleted", "external absence is not an in-vault dangle")
+}
+
+// Internal-consistency invariant: every per-vault doctor check must
+// identify its vault by the SAME label. All other per-vault checks
+// (vault-path, vault-writable, profile, vault-git, quarantine) use the
+// configured `v.Name`; asset-refs uses `filepath.Base(v.Path)`. When the
+// vault dir basename differs from the configured name (init slugifies, so
+// any dir with capitals/spaces triggers this), asset-refs is mislabeled —
+// a JSON consumer grouping checks by the `vault` field mis-attributes the
+// asset-refs row. This test fails until asset-refs uses v.Name like the
+// rest. (Defect proof: policy-independent internal-consistency invariant.)
+func TestDoctorAssetRefsLabelMatchesOtherChecks(t *testing.T) {
+	testEnv(t)
+	// Basename "My Vault" -> init registers the slug "my-vault", so the
+	// configured name and the path basename deliberately diverge.
+	vaultPath := filepath.Join(t.TempDir(), "My Vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+
+	out, err := runCLI(t, "doctor", "--json")
+	require.NoError(t, err, out)
+
+	var report struct {
+		Checks []struct {
+			Name  string `json:"name"`
+			Vault string `json:"vault"`
+		} `json:"checks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+
+	labels := map[string]string{}
+	for _, c := range report.Checks {
+		if c.Vault != "" {
+			labels[c.Name] = c.Vault
+		}
+	}
+	require.NotEmpty(t, labels["vault-path"], "sanity: vault-path is a per-vault check")
+	require.Equal(t, labels["vault-path"], labels["asset-refs"],
+		"asset-refs must label its vault the same way every other per-vault check does")
+}
+
+// The warning aggregates a count and cites one example. Two dangling
+// in-vault refs must surface as "2 in-vault attachment(s)".
+func TestDoctorAssetRefsCountsMultipleDangling(t *testing.T) {
+	testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+
+	a := "---\ntitle: A\nassets:\n  - Attachments/a.pdf\n---\n\nbody\n"
+	b := "---\ntitle: B\nassets:\n  - Attachments/b.pdf\n---\n\nbody\n"
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "a.md"), []byte(a), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "b.md"), []byte(b), 0o644))
+
+	out, err := runCLI(t, "doctor")
+	require.NoError(t, err, out)
+	require.Contains(t, out, "2 in-vault attachment(s) moved or deleted")
+	require.Contains(t, out, "e.g.", "the warning cites one example path")
+}
+
+// Malformed / hand-edited `assets:` ledgers must never crash doctor and
+// must not false-warn. The check only understands a list of strings, so a
+// scalar `assets:` and non-string list entries are silently skipped.
+// NOTE (limitation): a scalar `assets:` with a dangling path escapes the
+// check entirely — see implementation commentary.
+func TestDoctorAssetRefsMalformedLedgerIgnored(t *testing.T) {
+	testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+
+	// List with an empty string and a non-string entry — both skipped.
+	mixed := "---\ntitle: Mixed\nassets:\n  - \"\"\n  - 42\n---\n\nbody\n"
+	// A note with no frontmatter at all — must be skipped, not crash.
+	plain := "# Just a heading\n\nno frontmatter here\n"
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "mixed.md"), []byte(mixed), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "plain.md"), []byte(plain), 0o644))
+
+	out, err := runCLI(t, "doctor")
+	require.NoError(t, err, out)
+	require.Contains(t, out, "every in-vault attachment exists",
+		"empty/non-string entries and no-frontmatter notes are skipped, not false-warned")
+	require.NotContains(t, out, "moved or deleted")
+}
+
+// A hand-edited SCALAR assets: value is a legitimate one-entry ledger, so a
+// dangling scalar path must warn — never silent-green (gates fail closed).
+func TestDoctorAssetRefsScalarDanglingWarns(t *testing.T) {
+	testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+
+	scalar := "---\ntitle: Scalar\nassets: Attachments/missing.pdf\n---\n\nbody\n"
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "scalar.md"), []byte(scalar), 0o644))
+
+	out, err := runCLI(t, "doctor")
+	require.NoError(t, err, "a dangling scalar ref is a warning, not a failure: %s", out)
+	require.Contains(t, out, "moved or deleted", "a scalar ledger is checked like a one-entry list")
+}
+
+// The new `info` status must plumb through --json: an absent external path
+// yields a check with status "info" and increments the info summary count.
+func TestDoctorAssetRefsInfoStatusInJSON(t *testing.T) {
+	testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+	note := "---\ntitle: Big\nassets:\n  - /nonexistent/store/deadbeef.mp4\n---\n\nbody\n"
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "big.md"), []byte(note), 0o644))
+
+	out, err := runCLI(t, "doctor", "--json")
+	require.NoError(t, err, out)
+
+	var report struct {
+		Checks []struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+		} `json:"checks"`
+		Summary map[string]int `json:"summary"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+
+	var found bool
+	for _, c := range report.Checks {
+		if c.Name == "asset-refs" && c.Status == "info" {
+			found = true
+		}
+	}
+	require.True(t, found, "expected an asset-refs check with status \"info\": %s", out)
+	require.GreaterOrEqual(t, report.Summary["info"], 1, "info summary count must include the external path")
+}
+
 func TestProfileListAndEject(t *testing.T) {
 	testEnv(t)
 	out, err := runCLI(t, "profile", "list")
