@@ -1,7 +1,10 @@
 package imap
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"strings"
@@ -294,6 +297,128 @@ func TestRecordStoresAttachments(t *testing.T) {
 	// go-message strips the trailing CRLF (it delimits the MIME boundary).
 	require.Equal(t, "%PDF-fake", string(got), "the asset reader yields the decoded bytes")
 	require.Equal(t, int64(len(got)), rec.Assets[0].Size, "size matches the stored bytes")
+	// The emitter's SHA256 is load-bearing: the assets policy names the CAS
+	// blob CASDir/<sha>.ext and dedups in-vault on a hash match. A SHA that
+	// disagrees with Open()'s bytes silently corrupts content-addressing, so
+	// pin the hash to the actual content, not just its length.
+	wantSum := sha256.Sum256(got)
+	require.Equal(t, hex.EncodeToString(wantSum[:]), rec.Assets[0].SHA256,
+		"SHA256 must be computed over the exact bytes Open() yields")
+}
+
+func TestRecordStoresMultipleAttachmentsIndependently(t *testing.T) {
+	// Two distinct under-cap attachments. The record loop copies the bytes
+	// per iteration (data := a.Data) so each asset's Open closure captures
+	// ITS OWN payload — the classic loop-capture bug would make every asset
+	// yield the last attachment's bytes. This is the test that proves it,
+	// and that each asset's SHA256 matches its own content.
+	raw := []byte("Message-Id: <multi@x>\r\n" +
+		"From: a@example.com\r\n" +
+		"Date: Mon, 03 Aug 2026 08:00:00 +0000\r\n" +
+		"Subject: Two attachments\r\n" +
+		"Content-Type: multipart/mixed; boundary=B\r\n" +
+		"\r\n" +
+		"--B\r\n" +
+		"Content-Type: text/plain\r\n\r\nsee both\r\n" +
+		"--B\r\n" +
+		"Content-Type: application/octet-stream\r\n" +
+		"Content-Disposition: attachment; filename=\"first.bin\"\r\n" +
+		"\r\nFIRST-payload-alpha\r\n" +
+		"--B\r\n" +
+		"Content-Type: application/octet-stream\r\n" +
+		"Content-Disposition: attachment; filename=\"second.bin\"\r\n" +
+		"\r\nsecond-payload-OMEGA-longer\r\n" +
+		"--B--\r\n")
+
+	m := newTestIMAP(t, nil)
+	rec, err := m.record(raw, internalDate)
+	require.NoError(t, err)
+	require.Len(t, rec.Assets, 2, "both under-cap attachments carried")
+
+	byName := map[string][]byte{
+		"first.bin":  []byte("FIRST-payload-alpha"),
+		"second.bin": []byte("second-payload-OMEGA-longer"),
+	}
+	seen := map[string]bool{}
+	for _, a := range rec.Assets {
+		want, ok := byName[a.Filename]
+		require.Truef(t, ok, "unexpected asset filename %q", a.Filename)
+		seen[a.Filename] = true
+
+		rc, err := a.Open()
+		require.NoError(t, err)
+		got, err := io.ReadAll(rc)
+		require.NoError(t, err)
+		require.NoError(t, rc.Close())
+		require.Equal(t, want, got, "asset %q must yield its own bytes, not another part's", a.Filename)
+
+		sum := sha256.Sum256(got)
+		require.Equal(t, hex.EncodeToString(sum[:]), a.SHA256, "asset %q SHA256 matches its content", a.Filename)
+		require.Equal(t, int64(len(got)), a.Size, "asset %q size matches its content", a.Filename)
+	}
+	require.Len(t, seen, 2, "the two assets are distinct, not the same part twice")
+}
+
+func TestRecordMixedOversizeAndUnderCapAttachments(t *testing.T) {
+	// A message carrying one storable and one over-cap attachment: the
+	// under-cap part becomes an asset, the over-cap part is listed unstored.
+	// Neither is silently dropped (SPEC §23/§31.8).
+	big := strings.Repeat("Z", (10<<20)+1)
+	raw := []byte("Message-Id: <mixed@x>\r\n" +
+		"From: a@example.com\r\n" +
+		"Subject: One good one huge\r\n" +
+		"Content-Type: multipart/mixed; boundary=B\r\n" +
+		"\r\n" +
+		"--B\r\n" +
+		"Content-Type: text/plain\r\n\r\nbody\r\n" +
+		"--B\r\n" +
+		"Content-Type: application/pdf\r\n" +
+		"Content-Disposition: attachment; filename=\"small.pdf\"\r\n" +
+		"\r\n%PDF-small\r\n" +
+		"--B\r\n" +
+		"Content-Type: application/octet-stream\r\n" +
+		"Content-Disposition: attachment; filename=\"huge.bin\"\r\n" +
+		"\r\n" + big + "\r\n" +
+		"--B--\r\n")
+
+	m := newTestIMAP(t, nil)
+	rec, err := m.record(raw, internalDate)
+	require.NoError(t, err)
+
+	require.Len(t, rec.Assets, 1, "only the under-cap attachment is stored")
+	require.Equal(t, "small.pdf", rec.Assets[0].Filename)
+	rc, err := rec.Assets[0].Open()
+	require.NoError(t, err)
+	got, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	require.NoError(t, rc.Close())
+	require.Equal(t, "%PDF-small", string(got))
+
+	// The over-cap part is listed unstored; the storable one is NOT in the
+	// body (the pipeline renders ## Attachments from Record.Assets, not here).
+	require.Contains(t, rec.Body, "## Attachments not stored")
+	require.Contains(t, rec.Body, "huge.bin")
+	require.NotContains(t, rec.Body, "small.pdf", "the stored asset is not named in the not-stored list")
+	require.NotContains(t, rec.Body, "![[", "the pipeline, not the record, renders the stored-asset embeds")
+}
+
+func TestReadAttachmentBoundary(t *testing.T) {
+	// The cap is inclusive: exactly maxPartBytes stores, one byte over is
+	// oversize (listed unstored, never truncated-and-stored). An empty part
+	// is a valid zero-byte asset, not an error.
+	atCap := bytes.Repeat([]byte("x"), maxPartBytes)
+	data, reason := readAttachment(bytes.NewReader(atCap))
+	require.Empty(t, reason, "a part of exactly maxPartBytes is stored, not rejected")
+	require.Len(t, data, maxPartBytes)
+
+	overCap := bytes.Repeat([]byte("x"), maxPartBytes+1)
+	data, reason = readAttachment(bytes.NewReader(overCap))
+	require.Contains(t, reason, "exceeds", "one byte over the cap is oversize")
+	require.Nil(t, data, "an oversize part is never partially buffered")
+
+	data, reason = readAttachment(bytes.NewReader(nil))
+	require.Empty(t, reason)
+	require.Empty(t, data, "an empty attachment is a zero-byte asset, not an error")
 }
 
 func TestRecordListsOversizeAttachmentUnstored(t *testing.T) {
@@ -315,9 +440,43 @@ func TestRecordListsOversizeAttachmentUnstored(t *testing.T) {
 	rec, err := m.record(raw, internalDate)
 	require.NoError(t, err)
 	require.Empty(t, rec.Assets, "an over-cap attachment is never stored")
-	require.Contains(t, rec.Body, "## Oversized attachments (not stored)")
+	require.Contains(t, rec.Body, "## Attachments not stored")
 	require.Contains(t, rec.Body, "big.bin")
 	require.Contains(t, rec.Body, "exceeds the 10 MiB per-attachment limit")
+}
+
+// A base64 attachment that goes corrupt mid-stream must NEVER be stored as
+// a partial asset (that would carry a self-consistent SHA over truncated
+// bytes — silent truncation, §23). It is listed unstored with the decode
+// reason. (BDFL PR #8 gate condition.)
+func TestRecordDecodeErrorAttachmentIsUnstored(t *testing.T) {
+	// Valid base64, then a line that is not base64 at all, then more valid
+	// base64: go-message's decoder fails partway and io.ReadAll returns the
+	// partial bytes plus an error.
+	raw := []byte("Message-Id: <corrupt@x>\r\n" +
+		"From: a@example.com\r\n" +
+		"Subject: Corrupt attachment\r\n" +
+		"Content-Type: multipart/mixed; boundary=B\r\n" +
+		"\r\n" +
+		"--B\r\n" +
+		"Content-Type: text/plain\r\n\r\nbody\r\n" +
+		"--B\r\n" +
+		"Content-Type: application/octet-stream\r\n" +
+		"Content-Transfer-Encoding: base64\r\n" +
+		"Content-Disposition: attachment; filename=\"corrupt.bin\"\r\n" +
+		"\r\n" +
+		"QUJDREVGR0g=\r\n" +
+		"!!!not base64 at all!!!\r\n" +
+		"SU5WSVNJQkxF\r\n" +
+		"--B--\r\n")
+
+	m := newTestIMAP(t, nil)
+	rec, err := m.record(raw, internalDate)
+	require.NoError(t, err, "one undecodable part must not fail the whole message")
+	require.Empty(t, rec.Assets, "a partially-decoded attachment is never stored")
+	require.Contains(t, rec.Body, "## Attachments not stored")
+	require.Contains(t, rec.Body, "corrupt.bin")
+	require.Contains(t, rec.Body, "could not be decoded")
 }
 
 func TestRecordNoBody(t *testing.T) {

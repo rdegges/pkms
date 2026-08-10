@@ -772,8 +772,11 @@ One shared hardened HTTP client for all outbound fetches (push, RSS):
   the body). Attachments were NOT stored in phase 2 — **superseded by
   §31.8**: under-cap attachments now flow to the pipeline as
   `Record.Assets` and store via the §31.2 policy (the pipeline stamps
-  `assets:` and renders `## Attachments`), while an over-cap part is
-  listed unstored under `## Oversized attachments (not stored)` — nothing
+  `assets:` and renders `## Attachments`). A part that cannot be stored —
+  over the per-part cap, or an undecodable transfer encoding (go-message
+  surfaces a mid-stream decode failure as a read error; storing the
+  partial bytes would be silent truncation) — is listed with its reason
+  under a record-built `## Attachments not stored` section. Nothing is
   silently dropped.
 - Record fields: `title` (RFC 2047–decoded Subject; empty → `(no subject)`),
   `source` (`mid:<message-id>` — RFC 2392 scheme; question-round decision 4),
@@ -1171,11 +1174,14 @@ is no separate asset-location key (one ledger, one field, one reader —
 it after the note is written.
 
 **Body.** One uniform `## Attachments` section renders on every note whose
-record carried assets: in-vault assets as vault-relative wikilink embeds
-(path-qualified, duplicate-basename-safe per §5), external paths as plain
-markdown links (`[name](file:///…)`). Unstored items (over-cap, §31.8) are
-listed with name, type, size, and the reason they were not stored — nothing
-is silently dropped (§23's invariant, kept).
+record carried STORED assets: in-vault assets as vault-relative wikilink
+embeds (path-qualified, duplicate-basename-safe per §5), external paths as
+plain markdown links (`[name](file:///…)`). Items that could NOT be stored
+(§31.8: over the per-part cap, or an undecodable transfer encoding) are
+listed separately in a source-built `## Attachments not stored` section
+with name, type, and reason — no size, since an over-cap part is
+deliberately not read past `cap+1`. Nothing is silently dropped (§23's
+invariant, kept).
 
 ### 31.5 Pipeline: asset consumption, crash windows, undo
 

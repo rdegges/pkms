@@ -37,10 +37,10 @@ type attachment struct {
 	Filename string
 	MIME     string
 	// Data holds the decoded bytes for a stored attachment; nil when the
-	// part exceeded maxPartBytes (Oversize), in which case it is listed
-	// unstored rather than silently dropped (SPEC §31.8/§23).
-	Data     []byte
-	Oversize bool
+	// part could not be stored, in which case NotStored carries the reason
+	// and the part is listed rather than silently dropped (SPEC §31.8/§23).
+	Data      []byte
+	NotStored string
 }
 
 // record converts one raw RFC822 message into a pipeline record.
@@ -124,10 +124,10 @@ func (m *IMAP) record(raw []byte, internalDate time.Time) (ingest.Record, error)
 	// ## Attachments — §31.4/§31.8). Over-cap parts are listed unstored in
 	// the body so nothing is silently dropped (§23 invariant, kept).
 	var assets []ingest.Asset
-	var oversized []attachment
+	var notStored []attachment
 	for _, a := range atts {
-		if a.Oversize {
-			oversized = append(oversized, a)
+		if a.NotStored != "" {
+			notStored = append(notStored, a)
 			continue
 		}
 		sum := sha256.Sum256(a.Data)
@@ -141,16 +141,16 @@ func (m *IMAP) record(raw []byte, internalDate time.Time) (ingest.Record, error)
 			},
 		})
 	}
-	if len(oversized) > 0 {
+	if len(notStored) > 0 {
 		var b strings.Builder
 		b.WriteString(body)
-		b.WriteString("\n\n## Oversized attachments (not stored)\n\n")
-		for _, a := range oversized {
+		b.WriteString("\n\n## Attachments not stored\n\n")
+		for _, a := range notStored {
 			name := a.Filename
 			if name == "" {
 				name = "(unnamed)"
 			}
-			fmt.Fprintf(&b, "- %s (%s) — exceeds the %d MiB per-attachment limit\n", name, a.MIME, maxPartBytes>>20)
+			fmt.Fprintf(&b, "- %s (%s) — %s\n", name, a.MIME, a.NotStored)
 		}
 		body = b.String()
 	}
@@ -194,12 +194,12 @@ func walkParts(mr *mail.Reader) (htmlPart, textPart string, atts []attachment, e
 		case *mail.AttachmentHeader:
 			name, _ := ph.Filename()
 			ct, _, _ := ph.ContentType()
-			data, oversize := readAttachment(p.Body)
+			data, notStored := readAttachment(p.Body)
 			atts = append(atts, attachment{
-				Filename: sanitizeAttachmentName(name),
-				MIME:     ct,
-				Data:     data,
-				Oversize: oversize,
+				Filename:  sanitizeAttachmentName(name),
+				MIME:      ct,
+				Data:      data,
+				NotStored: notStored,
 			})
 		}
 	}
@@ -215,16 +215,22 @@ func readCapped(r io.Reader) string {
 }
 
 // readAttachment reads a decoded attachment body under the per-part cap.
-// It reads one byte past the cap to DETECT an oversize part (which is
-// listed unstored, never truncated-and-stored — a truncated binary is
-// worse than an honest "too big"). go-message has already charset/CTE
-// decoded the stream.
-func readAttachment(r io.Reader) (data []byte, oversize bool) {
-	b, _ := io.ReadAll(io.LimitReader(r, maxPartBytes+1))
+// A part is NEVER truncated-and-stored — a truncated binary is worse than
+// an honest reason. It returns a non-empty reason (Data nil) when the part
+// exceeds the cap (reads one byte past to detect it) OR when go-message's
+// charset/CTE decode fails mid-stream: io.ReadAll surfaces that as a
+// non-nil error alongside partial bytes, and storing those partial bytes
+// with a self-consistent SHA would be exactly the silent truncation §23
+// forbids.
+func readAttachment(r io.Reader) (data []byte, notStored string) {
+	b, err := io.ReadAll(io.LimitReader(r, maxPartBytes+1))
 	if int64(len(b)) > maxPartBytes {
-		return nil, true
+		return nil, fmt.Sprintf("exceeds the %d MiB per-attachment limit", maxPartBytes>>20)
 	}
-	return b, false
+	if err != nil {
+		return nil, "could not be decoded (malformed transfer encoding)"
+	}
+	return b, ""
 }
 
 // sanitizeAttachmentName neutralizes traversal AND markdown/wikilink tricks
