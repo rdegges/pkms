@@ -1,0 +1,29 @@
+# Phase 22: REGRESSION (fixed; pinned — verified RED against the pre-fix
+# code). PDF extraction re-execs the binary
+# and selects the child entry point on ONE environment variable
+# (PKMS_PDF_EXTRACT_CHILD). Nothing else distinguishes a child from a normal
+# run, so any environment that already carries that name turns
+#
+#     pkms ingest notes.md
+#
+# into "open argv[1], write the error text to argv[2]" — argv[2] is the file
+# the user asked to ingest, and it is TRUNCATED and replaced with
+# "open ingest: no such file or directory".
+#
+# The invariant: no environment variable may make pkms overwrite a file it
+# was only asked to read. Fix: have the parent pass a per-run secret (or a
+# dedicated argv sentinel) that the child verifies, so an inherited variable
+# alone cannot select the child path.
+
+exec pkms init --path $WORK/vault
+
+env PKMS_PDF_EXTRACT_CHILD=1
+exec sh -c 'pkms ingest notes.md; exit 0'
+
+# Whatever pkms decided to do, the user's file is not a scratch buffer.
+grep '^# my important notes$' notes.md
+grep '^keep me$' notes.md
+
+-- notes.md --
+# my important notes
+keep me

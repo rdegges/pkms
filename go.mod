@@ -15,6 +15,7 @@ require (
 	github.com/knadh/koanf/parsers/toml/v2 v2.2.1
 	github.com/knadh/koanf/providers/file v1.2.1
 	github.com/knadh/koanf/v2 v2.3.5
+	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/mmcdole/gofeed v1.4.0
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/rogpeppe/go-internal v1.15.0

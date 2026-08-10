@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rdegges/pkms/internal/fetch"
+	"github.com/rdegges/pkms/internal/ingest"
 )
 
 // Exit codes shared by lint/doctor per SPEC §8:
@@ -52,6 +53,11 @@ func newRootCmd() *cobra.Command {
 
 // Execute runs the CLI and returns the process exit code.
 func Execute() int {
+	// PDF extraction re-execs this binary as a sandboxed child (SPEC
+	// §31.6); a child invocation never reaches the CLI.
+	if ingest.PDFExtractChildMain() {
+		return 0
+	}
 	fetch.Version = version // User-Agent carries the build version
 	err := newRootCmd().Execute()
 	if err == nil {

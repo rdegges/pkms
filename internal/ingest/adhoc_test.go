@@ -27,7 +27,7 @@ func TestSniffDispatch(t *testing.T) {
 		{"xhtml with xml decl", []byte(`<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><body/></html>`), KindHTML},
 		{"plain text", []byte("just some notes\nline two\n"), KindText},
 		{"markdown", []byte("# Title\n\nSome *markdown*.\n"), KindText},
-		{"pdf", []byte("%PDF-1.5 binary follows"), KindAsset},
+		{"pdf", []byte("%PDF-1.5 binary follows"), KindPDF},
 		{"png", []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0}, KindAsset},
 		{"zip", []byte{'P', 'K', 0x03, 0x04, 0, 0, 0, 0}, KindAsset},
 		{"plain xml", []byte(`<?xml version="1.0"?><note><to>x</to></note>`), KindAsset},
