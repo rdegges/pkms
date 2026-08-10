@@ -36,6 +36,11 @@ const (
 type attachment struct {
 	Filename string
 	MIME     string
+	// Data holds the decoded bytes for a stored attachment; nil when the
+	// part could not be stored, in which case NotStored carries the reason
+	// and the part is listed rather than silently dropped (SPEC §31.8/§23).
+	Data      []byte
+	NotStored string
 }
 
 // record converts one raw RFC822 message into a pipeline record.
@@ -113,16 +118,39 @@ func (m *IMAP) record(raw []byte, internalDate time.Time) (ingest.Record, error)
 	if body == "" {
 		body = "(the message has no readable text or HTML body)"
 	}
-	if len(atts) > 0 {
+
+	// Under-cap attachments flow to the pipeline as Record.Assets and land
+	// via the §31.2 storage policy (the pipeline stamps assets: and renders
+	// ## Attachments — §31.4/§31.8). Over-cap parts are listed unstored in
+	// the body so nothing is silently dropped (§23 invariant, kept).
+	var assets []ingest.Asset
+	var notStored []attachment
+	for _, a := range atts {
+		if a.NotStored != "" {
+			notStored = append(notStored, a)
+			continue
+		}
+		sum := sha256.Sum256(a.Data)
+		data := a.Data // capture per-iteration for the closure
+		assets = append(assets, ingest.Asset{
+			Filename: a.Filename,
+			SHA256:   hex.EncodeToString(sum[:]),
+			Size:     int64(len(data)),
+			Open: func() (io.ReadCloser, error) {
+				return io.NopCloser(bytes.NewReader(data)), nil
+			},
+		})
+	}
+	if len(notStored) > 0 {
 		var b strings.Builder
 		b.WriteString(body)
-		b.WriteString("\n\n## Attachments\n\n")
-		for _, a := range atts {
+		b.WriteString("\n\n## Attachments not stored\n\n")
+		for _, a := range notStored {
 			name := a.Filename
 			if name == "" {
 				name = "(unnamed)"
 			}
-			fmt.Fprintf(&b, "- %s (%s) — not stored; attachment support lands in phase 2.5\n", name, a.MIME)
+			fmt.Fprintf(&b, "- %s (%s) — %s\n", name, a.MIME, a.NotStored)
 		}
 		body = b.String()
 	}
@@ -132,6 +160,7 @@ func (m *IMAP) record(raw []byte, internalDate time.Time) (ingest.Record, error)
 		NoteType:   m.cfg.NoteType,
 		Fields:     fields,
 		Body:       body + "\n",
+		Assets:     assets,
 	}, nil
 }
 
@@ -165,7 +194,13 @@ func walkParts(mr *mail.Reader) (htmlPart, textPart string, atts []attachment, e
 		case *mail.AttachmentHeader:
 			name, _ := ph.Filename()
 			ct, _, _ := ph.ContentType()
-			atts = append(atts, attachment{Filename: sanitizeAttachmentName(name), MIME: ct})
+			data, notStored := readAttachment(p.Body)
+			atts = append(atts, attachment{
+				Filename:  sanitizeAttachmentName(name),
+				MIME:      ct,
+				Data:      data,
+				NotStored: notStored,
+			})
 		}
 	}
 	return htmlPart, textPart, atts, nil
@@ -177,6 +212,25 @@ func readCapped(r io.Reader) string {
 		return string(b)
 	}
 	return string(b)
+}
+
+// readAttachment reads a decoded attachment body under the per-part cap.
+// A part is NEVER truncated-and-stored — a truncated binary is worse than
+// an honest reason. It returns a non-empty reason (Data nil) when the part
+// exceeds the cap (reads one byte past to detect it) OR when go-message's
+// charset/CTE decode fails mid-stream: io.ReadAll surfaces that as a
+// non-nil error alongside partial bytes, and storing those partial bytes
+// with a self-consistent SHA would be exactly the silent truncation §23
+// forbids.
+func readAttachment(r io.Reader) (data []byte, notStored string) {
+	b, err := io.ReadAll(io.LimitReader(r, maxPartBytes+1))
+	if int64(len(b)) > maxPartBytes {
+		return nil, fmt.Sprintf("exceeds the %d MiB per-attachment limit", maxPartBytes>>20)
+	}
+	if err != nil {
+		return nil, "could not be decoded (malformed transfer encoding)"
+	}
+	return b, ""
 }
 
 // sanitizeAttachmentName neutralizes traversal AND markdown/wikilink tricks
