@@ -1397,13 +1397,19 @@ agents/archivist.md               # pkms:archivist — write-capable
 agents/librarian.md               # pkms:librarian — disallowedTools: Write, Edit
 skills/cli/SKILL.md               # /pkms:cli — the CLI contract + safety protocol
 skills/process-inbox/SKILL.md     # /pkms:process-inbox — the flagship skill
-.mcp.json                         # wires `pkms mcp` (§32.6) when present
 ```
 
 Install is the **two-step** flow (verified against live Claude Code docs
 2026-08-10; a one-step form does not exist): `/plugin marketplace add
 rdegges/pkms` then `/plugin install pkms@rdegges`. `marketplace.json` is
 required for it; both files ship.
+
+The plugin does **not** wire `pkms mcp` (§32.6): inside Claude Code the
+agents use the CLI — the surface the §32.5 prompt gates verify — and
+adding an MCP read path here would be a second, ungated way to do the
+same reads in the one host where the CLI is the taught contract. `pkms
+mcp` exists for non-Claude hosts only, invoked directly, never `.mcp.json`
+in this plugin.
 
 ### 32.4 Agents, skills, and the safety protocol
 
@@ -1433,10 +1439,15 @@ required for it; both files ship.
 The `process-inbox` skill embeds one fenced, gate-checked block: resolve
 the vault → `pkms profile show --json` (learn the capture folder and
 types) → `pkms query` the capture folder → `pkms snapshot` → per note,
-decide a destination from the profile and file it through the writer/`pkms
-ingest`/`lint --fix` primitives → `pkms lint` (the invariant) → report.
-The e2e substrate test (§32.7) is tied to this block and fails if it
-drifts.
+decide a destination from the profile and MOVE the note there with the
+agent's own file tools (the binary has no move/write command — filing is
+taste-dependent, §32.1), using `pkms ingest` for new external content and
+`pkms lint --fix` for the deterministic repairs it covers → `pkms lint`
+(the verifying invariant — a clean report is what proves the moves were
+legal) → report. The e2e substrate test (§32.7) is tied to this block and
+fails if it drifts. Note the sequence names only real primitives: the
+`pkms` subcommands that exist, plus the agent's file tools for the move
+itself.
 
 ### 32.5 Prompt gates (a note's commands must be real)
 
