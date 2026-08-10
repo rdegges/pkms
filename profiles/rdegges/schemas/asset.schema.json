@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "asset",
+  "type": "object",
+  "required": ["title", "source", "created", "tags", "mime", "size", "sha256"],
+  "properties": {
+    "title": { "type": "string" },
+    "source": { "type": "string", "pattern": "^(https?://|mid:|file://)" },
+    "created": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}" },
+    "tags": {
+      "type": "array",
+      "items": { "type": "string" },
+      "contains": { "const": "asset" }
+    },
+    "mime": { "type": "string" },
+    "size": { "type": "integer", "minimum": 0 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

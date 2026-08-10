@@ -2,6 +2,9 @@ package ingest
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,10 +27,10 @@ func TestSniffDispatch(t *testing.T) {
 		{"xhtml with xml decl", []byte(`<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml"><body/></html>`), KindHTML},
 		{"plain text", []byte("just some notes\nline two\n"), KindText},
 		{"markdown", []byte("# Title\n\nSome *markdown*.\n"), KindText},
-		{"pdf", []byte("%PDF-1.5 binary follows"), KindUnsupported},
-		{"png", []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0}, KindUnsupported},
-		{"zip", []byte{'P', 'K', 0x03, 0x04, 0, 0, 0, 0}, KindUnsupported},
-		{"plain xml", []byte(`<?xml version="1.0"?><note><to>x</to></note>`), KindUnsupported},
+		{"pdf", []byte("%PDF-1.5 binary follows"), KindAsset},
+		{"png", []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0}, KindAsset},
+		{"zip", []byte{'P', 'K', 0x03, 0x04, 0, 0, 0, 0}, KindAsset},
+		{"plain xml", []byte(`<?xml version="1.0"?><note><to>x</to></note>`), KindAsset},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -80,13 +83,20 @@ func TestHTMLToMarkdownLatin1(t *testing.T) {
 	require.Contains(t, md, "café")
 }
 
-type fakeGetter struct {
+var testTypes = NoteTypes{ProfileName: "para", Clip: "clip", Asset: "asset"}
+
+type fakeDownloader struct {
+	t        *testing.T
 	body     []byte
 	finalURL string
 	header   http.Header
 }
 
-func (f fakeGetter) Get(_ context.Context, rawURL string, _ int64, _ http.Header) (*fetch.Result, error) {
+func (f fakeDownloader) Download(_ context.Context, rawURL string, _ int64) (*fetch.Download, error) {
+	spool := filepath.Join(f.t.TempDir(), "spool")
+	if err := os.WriteFile(spool, f.body, 0o600); err != nil {
+		return nil, err
+	}
 	final := f.finalURL
 	if final == "" {
 		final = rawURL
@@ -95,13 +105,26 @@ func (f fakeGetter) Get(_ context.Context, rawURL string, _ int64, _ http.Header
 	if h == nil {
 		h = http.Header{"Content-Type": []string{"text/html; charset=utf-8"}}
 	}
-	return &fetch.Result{Body: f.body, FinalURL: final, Header: h, StatusCode: 200}, nil
+	sniff := f.body
+	if len(sniff) > 512 {
+		sniff = sniff[:512]
+	}
+	sum := sha256.Sum256(f.body)
+	return &fetch.Download{
+		SpoolPath: spool,
+		Size:      int64(len(f.body)),
+		SHA256:    hex.EncodeToString(sum[:]),
+		Sniff:     sniff,
+		FinalURL:  final,
+		Header:    h,
+	}, nil
 }
 
 func TestURLRecord(t *testing.T) {
-	g := fakeGetter{body: []byte(`<html><head><title>Hello World</title></head><body><article><p>Enough article content to extract for the record body goes right here.</p></article></body></html>`)}
+	g := fakeDownloader{t: t, body: []byte(`<html><head><title>Hello World</title></head><body><article><p>Enough article content to extract for the record body goes right here.</p></article></body></html>`)}
 
-	rec, err := URLRecord(context.Background(), g, "https://Example.com/post#sec", "clip", testNow)
+	rec, cleanup, err := URLRecord(context.Background(), g, "https://Example.com/post#sec", testTypes, 0, testNow)
+	defer cleanup()
 	require.NoError(t, err)
 	require.Equal(t, "https://example.com/post", rec.NaturalKey, "canonicalized key")
 	require.Equal(t, "clip", rec.NoteType)
@@ -110,30 +133,61 @@ func TestURLRecord(t *testing.T) {
 	require.Equal(t, "2026-08-03T12:00:00Z", rec.Fields["created"])
 	require.NotContains(t, rec.Fields, "fetched_url", "no redirect → no fetched_url")
 	require.Contains(t, rec.Body, "Enough article content")
+	require.Empty(t, rec.Assets, "page records carry no assets")
 }
 
 func TestURLRecordRecordsRedirect(t *testing.T) {
-	g := fakeGetter{
+	g := fakeDownloader{
+		t:        t,
 		body:     []byte(`<html><head><title>T</title></head><body><article><p>Redirected content body with sufficient length for extraction to work.</p></article></body></html>`),
 		finalURL: "https://example.com/final",
 	}
-	rec, err := URLRecord(context.Background(), g, "https://example.com/short", "clip", testNow)
+	rec, cleanup, err := URLRecord(context.Background(), g, "https://example.com/short", testTypes, 0, testNow)
+	defer cleanup()
 	require.NoError(t, err)
 	require.Equal(t, "https://example.com/short", rec.Fields["source"])
 	require.Equal(t, "https://example.com/final", rec.Fields["fetched_url"])
 }
 
 func TestURLRecordRejectsNonHTTP(t *testing.T) {
-	_, err := URLRecord(context.Background(), fakeGetter{}, "ftp://example.com/x", "clip", testNow)
+	_, cleanup, err := URLRecord(context.Background(), fakeDownloader{t: t}, "ftp://example.com/x", testTypes, 0, testNow)
+	defer cleanup()
 	require.ErrorContains(t, err, "not an http(s) URL")
 }
 
-func TestURLRecordUnsupportedType(t *testing.T) {
-	g := fakeGetter{body: []byte("%PDF-1.5 pretend pdf bytes")}
-	_, err := URLRecord(context.Background(), g, "https://example.com/doc.pdf", "clip", testNow)
-	require.ErrorContains(t, err, "unsupported content type application/pdf")
-	require.ErrorContains(t, err, "phase 2.5")
-	require.ErrorContains(t, err, "nothing was written")
+func TestURLRecordAsset(t *testing.T) {
+	// The old exit-2 refusal ("unsupported content type … phase 2.5") is
+	// gone: a binary type now builds an asset record (SPEC §31.1).
+	body := []byte("%PDF-1.5 pretend pdf bytes")
+	g := fakeDownloader{t: t, body: body}
+	rec, cleanup, err := URLRecord(context.Background(), g, "https://example.com/doc.pdf", testTypes, 0, testNow)
+	defer cleanup()
+	require.NoError(t, err)
+	require.Equal(t, "asset", rec.NoteType)
+	require.Equal(t, "https://example.com/doc.pdf", rec.Fields["title"], "remote asset titles are the URL")
+	require.Equal(t, "application/pdf", rec.Fields["mime"])
+	require.Equal(t, int64(len(body)), rec.Fields["size"])
+	require.Len(t, rec.Fields["sha256"], 64)
+	require.Equal(t, []any{"asset"}, rec.Fields["tags"])
+	require.Len(t, rec.Assets, 1)
+	require.Equal(t, "doc.pdf", rec.Assets[0].Filename)
+	require.Empty(t, rec.Assets[0].LocalPath, "remote assets never reference in place")
+
+	rc, err := rec.Assets[0].Open()
+	require.NoError(t, err)
+	got, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	require.NoError(t, rc.Close())
+	require.Equal(t, body, got, "asset reader streams the spool")
+}
+
+func TestURLRecordAssetWithoutMapping(t *testing.T) {
+	g := fakeDownloader{t: t, body: []byte("%PDF-1.5 pretend pdf bytes")}
+	nt := NoteTypes{ProfileName: "bare", Clip: "clip"}
+	_, cleanup, err := URLRecord(context.Background(), g, "https://example.com/doc.pdf", nt, 0, testNow)
+	defer cleanup()
+	require.ErrorContains(t, err, `profile "bare" declares no asset note type`)
+	require.ErrorContains(t, err, `asset = "<note type for ingested binaries>"`)
 }
 
 func TestFileRecordText(t *testing.T) {
@@ -141,7 +195,7 @@ func TestFileRecordText(t *testing.T) {
 	p := filepath.Join(dir, "notes.md")
 	require.NoError(t, os.WriteFile(p, []byte("# My Notes\n\nSome text.\n"), 0o644))
 
-	rec, err := FileRecord(p, "clip", testNow)
+	rec, err := FileRecord(p, testTypes, testNow)
 	require.NoError(t, err)
 	require.Len(t, rec.NaturalKey, 64, "content sha256 hex")
 	require.Equal(t, "notes", rec.Fields["title"])
@@ -151,13 +205,31 @@ func TestFileRecordText(t *testing.T) {
 	// Same content, different path → same key (content-addressed dedup).
 	p2 := filepath.Join(dir, "copy.md")
 	require.NoError(t, os.WriteFile(p2, []byte("# My Notes\n\nSome text.\n"), 0o644))
-	rec2, err := FileRecord(p2, "clip", testNow)
+	rec2, err := FileRecord(p2, testTypes, testNow)
 	require.NoError(t, err)
 	require.Equal(t, rec.NaturalKey, rec2.NaturalKey)
 }
 
+func TestFileRecordAsset(t *testing.T) {
+	dir := t.TempDir()
+	body := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 1, 2, 3}
+	p := filepath.Join(dir, "shot.png")
+	require.NoError(t, os.WriteFile(p, body, 0o644))
+
+	rec, err := FileRecord(p, testTypes, testNow)
+	require.NoError(t, err)
+	require.Equal(t, "asset", rec.NoteType)
+	require.Equal(t, "shot", rec.Fields["title"], "local asset titles are the filename stem")
+	require.Equal(t, "image/png", rec.Fields["mime"])
+	require.Equal(t, int64(len(body)), rec.Fields["size"])
+	require.Equal(t, rec.NaturalKey, rec.Fields["sha256"], "file pushes key on content hash")
+	require.Len(t, rec.Assets, 1)
+	require.Equal(t, "shot.png", rec.Assets[0].Filename)
+	require.NotEmpty(t, rec.Assets[0].LocalPath, "local files can reference in place")
+}
+
 func TestFileRecordMissing(t *testing.T) {
-	_, err := FileRecord(filepath.Join(t.TempDir(), "nope.md"), "clip", testNow)
+	_, err := FileRecord(filepath.Join(t.TempDir(), "nope.md"), testTypes, testNow)
 	require.ErrorContains(t, err, "not an http(s) URL and not an existing file")
 }
 

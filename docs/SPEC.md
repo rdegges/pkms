@@ -1269,3 +1269,16 @@ carried assets.
 - Gate discipline: the check counts as installed only once a test has
   observed it rejecting a seeded dangling ref (§15).
 
+### 31.10 Amendment: `date-format-iso` accepts RFC3339 (found during PR2)
+
+A latent phase-2 conflict, exposed by the first e2e script to run `lint`
+over an ingested note: §20 stamps `created` as a full RFC3339 timestamp
+with offset, while `date-format-iso` (docs/LINT-RULES.md) demanded a bare
+`YYYY-MM-DD` and lists `created` among its default keys — so every note
+ingested since v0.2.0 lint-errors. Both built-in profiles are affected
+(`rdegges` lists `created` explicitly). Resolution: the rule also passes
+any value that parses as full RFC3339 — a valid timestamp is not a
+malformed date; the rule exists to catch `2026/07/15`-style drift and
+empties, not the ingest contract. Frozen docs get amendments, never
+silent drift (§28 preamble).
+

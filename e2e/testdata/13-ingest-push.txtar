@@ -22,9 +22,24 @@ stdout '"source_id":'
 stderr 'refusing to fetch'
 stderr 'private address 127.0.0.1'
 
-# Unsupported content (phase 2.5 territory): honest refusal, exit 2.
-! exec pkms ingest report.pdf
-stderr 'unsupported content type application/pdf \(PDF/audio/video land in phase 2.5\); nothing was written'
+# Binary content is never refused (SPEC §31.1): it lands as an asset note
+# with the PDF stored in Attachments/ and wikilinked. (Text extraction is
+# the PDF handler's job — this fixture exercises the generic fallback.)
+exec pkms ingest report.pdf
+stdout 'ingested → _Inbox/.* - report\.md'
+exists $WORK/vault/Attachments/report.pdf
+
+# The asset note carries the §31.4 contract fields and the assets: ledger.
+exec pkms query --type asset --json
+stdout '"title": "report"'
+stdout '"mime": "application/pdf"'
+stdout '"sha256":'
+stdout '"assets":'
+stdout 'Attachments/report.pdf'
+
+# Re-pushing the same binary dedups on content hash.
+exec pkms ingest report.pdf
+stdout 'already ingested → _Inbox/.* - report\.md'
 
 # Non-http(s) schemes never fetch.
 ! exec pkms ingest ftp://example.com/file

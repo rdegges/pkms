@@ -64,7 +64,9 @@ Conventions:
   `last_met`, `created`, `updated`, `last_updated`, `date_clipped`,
   `date_published`, `published`; profile-configurable list).
 - Check: value matches `^\d{4}-\d{2}-\d{2}$` AND is a real calendar date.
-  Empty and `null` values fail.
+  Empty and `null` values fail. A full RFC3339 timestamp also passes
+  (amended in SPEC §31.10: the ingest pipeline stamps `created` as RFC3339
+  with offset per SPEC §20, and a valid timestamp is not a malformed date).
 - Pass: `last_met: 2026-07-15`. Fail: `last_met:` (empty), `last_met: null`,
   `date: 2026-13-01`.
 - Fixable: only unambiguous re-formats (`2026/07/15`, `July 15, 2026` →

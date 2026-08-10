@@ -1,0 +1,39 @@
+# Phase 17: the asset storage policy's external branch (SPEC §31.2) — an
+# over-threshold LOCAL file is referenced in place: no copy lands in the
+# vault, and the note links the machine-local path as a plain link. (The
+# CAS branch needs a remote URL, which the SSRF guard keeps out of e2e —
+# SPEC §28.17; it is unit-tested in internal/ingest.)
+
+exec pkms init --path $WORK/vault
+exec sh -c 'cat assets.toml >> "$PKMS_CONFIG"'
+
+exec pkms ingest payload.bin
+stdout 'ingested → _Inbox/.* - payload\.md'
+
+# Nothing was copied into the vault.
+! exists $WORK/vault/Attachments/payload.bin
+! exists $WORK/vault/Attachments
+
+# The note stamps the assets: ledger with the machine-local absolute path
+# and renders a plain file:// link, never a wikilink (SPEC §31.4).
+exec pkms query --type asset --json
+stdout '"title": "payload"'
+stdout '"assets":'
+stdout 'payload.bin'
+
+# Re-pushing dedups on content hash, same as in-vault assets.
+exec pkms ingest payload.bin
+stdout 'already ingested → _Inbox/.* - payload\.md'
+
+# The vault stays healthy: the referenced-in-place file is outside the
+# vault, and lint has nothing to complain about.
+exec pkms lint
+
+-- assets.toml --
+
+  [vaults.assets]
+  threshold = "4B"
+
+-- payload.bin --
+%PDF-1.5
+fake pdf payload big enough to clear the 4-byte threshold

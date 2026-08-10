@@ -33,6 +33,7 @@ func TestNewUserExperience(t *testing.T) {
 			env.Setenv("HOME", env.WorkDir+"/home")
 			env.Setenv("PKMS_CONFIG", env.WorkDir+"/home/config.toml")
 			env.Setenv("XDG_STATE_HOME", env.WorkDir+"/home/state")
+			env.Setenv("XDG_DATA_HOME", env.WorkDir+"/home/data")
 			// Never let git prompt or pick up the developer's config.
 			env.Setenv("GIT_TERMINAL_PROMPT", "0")
 			env.Setenv("GIT_CONFIG_GLOBAL", env.WorkDir+"/home/gitconfig")

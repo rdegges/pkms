@@ -5,6 +5,8 @@ package fetch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +14,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"syscall"
 	"time"
 )
@@ -24,6 +27,15 @@ const (
 	// MaxHTMLBody / MaxFeedBody cap response bodies BEFORE parsing.
 	MaxHTMLBody = 10 << 20
 	MaxFeedBody = 15 << 20
+
+	// DefaultMaxDownload caps asset downloads (SPEC §31.3);
+	// [vaults.assets] max_download overrides per vault.
+	DefaultMaxDownload = 100 << 20
+	// downloadDeadline is Download's own wall clock (SPEC §31.3): the 20 s
+	// page deadline would make a 100 MiB body unreachable on real links.
+	downloadDeadline = 10 * time.Minute
+
+	sniffLen = 512
 )
 
 // deniedPrefixes are the address ranges pkms never connects to (SPEC §21).
@@ -118,7 +130,11 @@ var Version = "dev"
 
 // Client wraps the hardened http.Client. Zero value is not usable — New().
 type Client struct {
-	http      *http.Client
+	http *http.Client
+	// dl shares the hardened transport and redirect policy but carries
+	// Download's own 10 m deadline (SPEC §31.3) — inherited by
+	// construction, so the SSRF dialer re-checks every hop here too.
+	dl        *http.Client
 	userAgent string
 }
 
@@ -130,16 +146,22 @@ func New() *Client {
 		ForceAttemptHTTP2: true,
 		Proxy:             nil, // a proxy would bypass the resolved-IP check
 	}
+	redirects := func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxRedirects {
+			return fmt.Errorf("stopped after %d redirects", maxRedirects)
+		}
+		return checkURL(req.URL, via[0].URL)
+	}
 	return &Client{
 		http: &http.Client{
-			Transport: transport,
-			Timeout:   totalDeadline,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= maxRedirects {
-					return fmt.Errorf("stopped after %d redirects", maxRedirects)
-				}
-				return checkURL(req.URL, via[0].URL)
-			},
+			Transport:     transport,
+			Timeout:       totalDeadline,
+			CheckRedirect: redirects,
+		},
+		dl: &http.Client{
+			Transport:     transport,
+			Timeout:       downloadDeadline,
+			CheckRedirect: redirects,
 		},
 		userAgent: fmt.Sprintf("pkms/%s (+https://github.com/rdegges/pkms)", Version),
 	}
@@ -206,4 +228,92 @@ func (c *Client) Get(ctx context.Context, rawURL string, maxBody int64, conditio
 	}
 	res.Body = body
 	return res, nil
+}
+
+// Download is one spooled fetch (SPEC §31.3): the body streams to an
+// OS-temp file, hashed and sniffed on the way through — never
+// whole-buffered. The caller owns SpoolPath and must remove it.
+type Download struct {
+	SpoolPath string
+	Size      int64
+	SHA256    string // lowercase hex
+	Sniff     []byte // first 512 bytes, for MIME dispatch (SPEC §20)
+	FinalURL  string
+	Header    http.Header
+}
+
+// Download fetches rawURL under maxBody (0 → DefaultMaxDownload) onto a
+// spool file. An over-cap body is an error, never a truncated asset.
+func (c *Client) Download(ctx context.Context, rawURL string, maxBody int64) (*Download, error) {
+	if maxBody <= 0 {
+		maxBody = DefaultMaxDownload
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("bad URL %q: %w", rawURL, err)
+	}
+	if err := checkURL(u, u); err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", c.userAgent)
+	resp, err := c.dl.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", rawURL, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("fetch %s: HTTP %s", rawURL, resp.Status)
+	}
+
+	spool, err := os.CreateTemp("", "pkms-dl-*")
+	if err != nil {
+		return nil, err
+	}
+	h := sha256.New()
+	n, err := io.Copy(spool, io.TeeReader(io.LimitReader(resp.Body, maxBody+1), h))
+	if err == nil && n > maxBody {
+		err = fmt.Errorf("fetch %s: %w (%d MiB)", rawURL, errBodyTooLarge, maxBody>>20)
+	}
+	if err == nil {
+		err = spool.Sync()
+	}
+	if cerr := spool.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(spool.Name())
+		return nil, err
+	}
+
+	sniff := make([]byte, sniffLen)
+	sn, err := readAtStart(spool.Name(), sniff)
+	if err != nil {
+		_ = os.Remove(spool.Name())
+		return nil, err
+	}
+	return &Download{
+		SpoolPath: spool.Name(),
+		Size:      n,
+		SHA256:    hex.EncodeToString(h.Sum(nil)),
+		Sniff:     sniff[:sn],
+		FinalURL:  resp.Request.URL.String(),
+		Header:    resp.Header,
+	}, nil
+}
+
+func readAtStart(path string, buf []byte) (int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = f.Close() }()
+	n, err := io.ReadFull(f, buf)
+	if err == io.EOF || err == io.ErrUnexpectedEOF {
+		err = nil
+	}
+	return n, err
 }

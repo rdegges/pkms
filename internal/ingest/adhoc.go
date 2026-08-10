@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -23,13 +24,15 @@ import (
 	"github.com/rdegges/pkms/internal/fetch"
 )
 
-// Kind is the sniffed dispatch class (SPEC §20).
+// Kind is the sniffed dispatch class (SPEC §20/§31.1).
 type Kind int
 
 const (
 	KindHTML Kind = iota
 	KindText
-	KindUnsupported
+	// KindAsset is the generic fallback: any non-page type lands as an
+	// asset note — push mode never refuses a sniffed type (SPEC §31.1).
+	KindAsset
 )
 
 // Sniff classifies content by its bytes (SPEC §20): DetectContentType over
@@ -52,10 +55,39 @@ func Sniff(body []byte) (Kind, string) {
 		if bytes.Contains(bytes.ToLower(probe), []byte("<html")) {
 			return KindHTML, sniffed
 		}
-		return KindUnsupported, sniffed
+		return KindAsset, sniffed
 	default:
-		return KindUnsupported, sniffed
+		return KindAsset, sniffed
 	}
+}
+
+// NoteTypes carries the profile's [ingest] mappings (plus its name, for
+// error copy) into the push record builders; the builder picks per sniffed
+// kind (SPEC §31.1).
+type NoteTypes struct {
+	ProfileName string
+	Clip        string
+	Asset       string
+}
+
+func (nt NoteTypes) clipType() (string, error) {
+	if nt.Clip == "" {
+		return "", fmt.Errorf(`profile %q declares no ingest note type; add to its profile.toml:
+
+  [ingest]
+  clip = "<note type for ingested clips>"`, nt.ProfileName)
+	}
+	return nt.Clip, nil
+}
+
+func (nt NoteTypes) assetType() (string, error) {
+	if nt.Asset == "" {
+		return "", fmt.Errorf(`profile %q declares no asset note type; add to its profile.toml:
+
+  [ingest]
+  asset = "<note type for ingested binaries>"`, nt.ProfileName)
+	}
+	return nt.Asset, nil
 }
 
 // parseTimeout bounds one document's extraction+conversion (SPEC §21): the
@@ -159,47 +191,91 @@ func CanonicalURL(u *url.URL) string {
 	return c.String()
 }
 
-// Getter is the fetch surface URLRecord needs; satisfied by *fetch.Client
-// (tests inject canned responses — network policy is fetch's own concern).
+// Getter is the buffered fetch surface (RSS conditional GETs); satisfied
+// by *fetch.Client (tests inject canned responses — network policy is
+// fetch's own concern).
 type Getter interface {
 	Get(ctx context.Context, rawURL string, maxBody int64, conditional http.Header) (*fetch.Result, error)
 }
 
-// URLRecord fetches rawURL through the hardened client and builds the push
-// record (SPEC §19/§20). noteType comes from the profile's [ingest] table.
-func URLRecord(ctx context.Context, c Getter, rawURL, noteType string, now time.Time) (Record, error) {
+// Downloader is the spooled fetch surface URLRecord needs (SPEC §31.3);
+// satisfied by *fetch.Client.
+type Downloader interface {
+	Download(ctx context.Context, rawURL string, maxBody int64) (*fetch.Download, error)
+}
+
+// URLRecord fetches rawURL onto a spool through the hardened client and
+// builds the push record for the sniffed kind (SPEC §19/§20/§31.1). The
+// returned cleanup (never nil) removes the spool; call it only after the
+// record's assets have been consumed by the pipeline.
+func URLRecord(ctx context.Context, d Downloader, rawURL string, nt NoteTypes, maxDownload int64, now time.Time) (Record, func(), error) {
+	noop := func() {}
 	u, err := url.Parse(rawURL)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return Record{}, fmt.Errorf("%q is not an http(s) URL; pass a URL or an existing file path", rawURL)
+		return Record{}, noop, fmt.Errorf("%q is not an http(s) URL; pass a URL or an existing file path", rawURL)
 	}
-	res, err := c.Get(ctx, rawURL, fetch.MaxHTMLBody, nil)
+	dl, err := d.Download(ctx, rawURL, maxDownload)
 	if err != nil {
-		return Record{}, err
+		return Record{}, noop, err
 	}
-	final, _ := url.Parse(res.FinalURL)
+	cleanup := func() { _ = os.Remove(dl.SpoolPath) }
+	final, _ := url.Parse(dl.FinalURL)
 	if final == nil {
 		final = u
 	}
 
 	rec := Record{
 		NaturalKey: CanonicalURL(u),
-		NoteType:   noteType,
 		Fields: map[string]any{
 			"source":  rawURL, // verbatim — never rewritten (SPEC §21)
 			"created": now.Format(time.RFC3339),
-			"tags":    []any{"clip"},
 		},
 	}
-	if res.FinalURL != rawURL {
-		rec.Fields["fetched_url"] = res.FinalURL
+	if dl.FinalURL != rawURL {
+		rec.Fields["fetched_url"] = dl.FinalURL
 	}
 
-	kind, sniffed := Sniff(res.Body)
+	kind, sniffed := Sniff(dl.Sniff)
+	if kind == KindAsset {
+		rec.NoteType, err = nt.assetType()
+		if err != nil {
+			cleanup()
+			return Record{}, noop, err
+		}
+		rec.Fields["title"] = rawURL
+		fillAssetFields(rec.Fields, sniffed, dl.Size, dl.SHA256)
+		rec.Assets = []Asset{{
+			Filename: path.Base(final.Path),
+			SHA256:   dl.SHA256,
+			Size:     dl.Size,
+			Open: func() (io.ReadCloser, error) {
+				return os.Open(dl.SpoolPath)
+			},
+		}}
+		return rec, cleanup, nil
+	}
+
+	// Page kinds are whole-buffered for parsing, so the page cap governs
+	// them even when the transfer spooled under the larger download cap
+	// (SPEC §21/§31.3).
+	defer cleanup()
+	if dl.Size > fetch.MaxHTMLBody {
+		return Record{}, noop, fmt.Errorf("fetch %s: page body exceeds the size limit (%d MiB)", rawURL, fetch.MaxHTMLBody>>20)
+	}
+	body, err := os.ReadFile(dl.SpoolPath)
+	if err != nil {
+		return Record{}, noop, err
+	}
+	rec.NoteType, err = nt.clipType()
+	if err != nil {
+		return Record{}, noop, err
+	}
+	rec.Fields["tags"] = []any{"clip"}
 	switch kind {
 	case KindHTML:
-		title, md, err := HTMLToMarkdown(res.Body, res.Header.Get("Content-Type"), final)
+		title, md, err := HTMLToMarkdown(body, dl.Header.Get("Content-Type"), final)
 		if err != nil {
-			return Record{}, fmt.Errorf("%s: %w", rawURL, err)
+			return Record{}, noop, fmt.Errorf("%s: %w", rawURL, err)
 		}
 		if title == "" {
 			title = rawURL
@@ -208,23 +284,24 @@ func URLRecord(ctx context.Context, c Getter, rawURL, noteType string, now time.
 		rec.Body = md
 	case KindText:
 		rec.Fields["title"] = rawURL
-		rec.Body = decodeText(res.Body, res.Header.Get("Content-Type"))
-	default:
-		return Record{}, unsupportedErr(sniffed)
+		rec.Body = decodeText(body, dl.Header.Get("Content-Type"))
 	}
-	return rec, nil
+	return rec, noop, nil
 }
 
 // FileRecord builds the push record for a local file (SPEC §20):
-// NaturalKey = content SHA-256, source = file:// URL.
-func FileRecord(path, noteType string, now time.Time) (Record, error) {
-	abs, err := filepath.Abs(path)
+// NaturalKey = content SHA-256, source = file:// URL. Page kinds are
+// whole-read under the parse cap; asset kinds are streamed and never
+// size-capped — the threshold decides placement, not admissibility
+// (SPEC §31.3).
+func FileRecord(fpath string, nt NoteTypes, now time.Time) (Record, error) {
+	abs, err := filepath.Abs(fpath)
 	if err != nil {
 		return Record{}, err
 	}
 	fi, err := os.Stat(abs)
 	if os.IsNotExist(err) {
-		return Record{}, fmt.Errorf("%q is not an http(s) URL and not an existing file", path)
+		return Record{}, fmt.Errorf("%q is not an http(s) URL and not an existing file", fpath)
 	}
 	if err != nil {
 		return Record{}, fmt.Errorf("stat %s: %w", abs, err)
@@ -232,6 +309,45 @@ func FileRecord(path, noteType string, now time.Time) (Record, error) {
 	if !fi.Mode().IsRegular() {
 		return Record{}, fmt.Errorf("%s is not a regular file", abs)
 	}
+	head, err := readHead(abs, 512)
+	if err != nil {
+		return Record{}, err
+	}
+	fileURL := &url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
+
+	rec := Record{
+		Fields: map[string]any{
+			"source":  fileURL.String(),
+			"created": now.Format(time.RFC3339),
+		},
+	}
+	title := strings.TrimSuffix(filepath.Base(abs), filepath.Ext(abs))
+	kind, sniffed := Sniff(head)
+
+	if kind == KindAsset {
+		rec.NoteType, err = nt.assetType()
+		if err != nil {
+			return Record{}, err
+		}
+		sum, err := hashFile(abs)
+		if err != nil {
+			return Record{}, err
+		}
+		rec.NaturalKey = sum
+		rec.Fields["title"] = title
+		fillAssetFields(rec.Fields, sniffed, fi.Size(), sum)
+		rec.Assets = []Asset{{
+			Filename: filepath.Base(abs),
+			SHA256:   sum,
+			Size:     fi.Size(),
+			Open: func() (io.ReadCloser, error) {
+				return os.Open(abs)
+			},
+			LocalPath: abs,
+		}}
+		return rec, nil
+	}
+
 	if fi.Size() > fetch.MaxHTMLBody {
 		return Record{}, fmt.Errorf("%s exceeds the %d MiB ingest limit", abs, fetch.MaxHTMLBody>>20)
 	}
@@ -240,19 +356,12 @@ func FileRecord(path, noteType string, now time.Time) (Record, error) {
 		return Record{}, err
 	}
 	sum := sha256.Sum256(body)
-	fileURL := &url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
-
-	rec := Record{
-		NaturalKey: hex.EncodeToString(sum[:]),
-		NoteType:   noteType,
-		Fields: map[string]any{
-			"source":  fileURL.String(),
-			"created": now.Format(time.RFC3339),
-			"tags":    []any{"clip"},
-		},
+	rec.NaturalKey = hex.EncodeToString(sum[:])
+	rec.NoteType, err = nt.clipType()
+	if err != nil {
+		return Record{}, err
 	}
-	title := strings.TrimSuffix(filepath.Base(abs), filepath.Ext(abs))
-	kind, sniffed := Sniff(body)
+	rec.Fields["tags"] = []any{"clip"}
 	switch kind {
 	case KindHTML:
 		htitle, md, err := HTMLToMarkdown(body, "", fileURL)
@@ -265,19 +374,48 @@ func FileRecord(path, noteType string, now time.Time) (Record, error) {
 		rec.Body = md
 	case KindText:
 		rec.Body = decodeText(body, "")
-	default:
-		return Record{}, unsupportedErr(sniffed)
 	}
 	rec.Fields["title"] = title
 	return rec, nil
 }
 
-func unsupportedErr(sniffed string) error {
+// fillAssetFields stamps the asset schema's typed fields (SPEC §31.4).
+func fillAssetFields(fields map[string]any, sniffed string, size int64, sha string) {
 	mime := sniffed
 	if i := strings.IndexByte(mime, ';'); i >= 0 {
 		mime = mime[:i]
 	}
-	return fmt.Errorf("unsupported content type %s (PDF/audio/video land in phase 2.5); nothing was written", mime)
+	fields["tags"] = []any{"asset"}
+	fields["mime"] = strings.TrimSpace(mime)
+	fields["size"] = size
+	fields["sha256"] = sha
+}
+
+func readHead(path string, n int) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	buf := make([]byte, n)
+	rn, err := io.ReadFull(f, buf)
+	if err == io.EOF || err == io.ErrUnexpectedEOF {
+		err = nil
+	}
+	return buf[:rn], err
+}
+
+func hashFile(p string) (string, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = f.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func decodeText(body []byte, contentTypeHeader string) string {

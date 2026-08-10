@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-yaml"
 
@@ -254,6 +255,12 @@ func (r dateFormatISO) CheckNote(ctx *lint.Context, n *vault.Note) []lint.Findin
 			}
 		}
 		if isISODate(raw) {
+			continue
+		}
+		if _, err := time.Parse(time.RFC3339, raw); err == nil {
+			// The ingest pipeline stamps `created` as a full RFC3339
+			// timestamp (SPEC §20) — a valid timestamp is not a malformed
+			// date (SPEC §31.10; latent phase-2 conflict).
 			continue
 		}
 		_, fixable := reformatDate(raw)
