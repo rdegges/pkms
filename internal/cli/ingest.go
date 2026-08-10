@@ -81,25 +81,48 @@ func runIngestPush(cmd *cobra.Command, jsonOut bool, arg string) error {
 		return err
 	}
 	nt := ingest.NoteTypes{ProfileName: prof.Name, Clip: prof.Ingest.Clip, Asset: prof.Ingest.Asset}
-
-	now := time.Now()
-	var rec ingest.Record
-	if strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://") {
-		var cleanup func()
-		rec, cleanup, err = ingest.URLRecord(cmd.Context(), fetch.New(), arg, nt, v.Assets.MaxDownloadBytes, now)
-		// The spool must outlive the pipeline run — the record's asset
-		// reader streams from it (SPEC §31.3).
-		defer cleanup()
-	} else {
-		rec, err = ingest.FileRecord(arg, nt, now)
-	}
-	if err != nil {
-		return err
+	// Media hooks are PUSH-ONLY (SPEC §31.7): cron must never run a
+	// ten-minute user command against a hostile pull attachment.
+	hooks := ingest.MediaHooks{
+		TranscribeCmd: v.Assets.TranscribeCmd,
+		ProbeCmd:      v.Assets.ProbeCmd,
+		Timeout:       v.Assets.HookTimeoutDur,
 	}
 
 	out := cmd.OutOrStdout()
 	printf := func(format string, a ...any) { fmt.Fprintf(out, format, a...) }
 	runner := &ingest.Runner{Vault: v, Profile: prof, Now: time.Now}
+
+	// Advisory dedup pre-check (SPEC §31.5): if this push is already
+	// ingested, skip the download and any media hooks entirely — a
+	// re-pushed remote video must not re-fetch 100 MiB and re-run a
+	// ten-minute transcribe just to no-op at emit time. The pipeline's
+	// emit-time check stays authoritative.
+	if existing, seen := runner.PushDedupCheck(ingest.PushNaturalKey(arg)); seen {
+		if jsonOut {
+			res := &ingest.Result{Source: "adhoc", Deduped: 1, Notes: []string{}, Existing: []string{existing}}
+			enc := json.NewEncoder(out)
+			enc.SetIndent("", "  ")
+			return enc.Encode(vaultIngestResult{Vault: v.Name, Sources: []*ingest.Result{res}})
+		}
+		printf("already ingested → %s\n", existing)
+		return nil
+	}
+
+	now := time.Now()
+	var rec ingest.Record
+	if strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://") {
+		var cleanup func()
+		rec, cleanup, err = ingest.URLRecord(cmd.Context(), fetch.New(), arg, nt, hooks, v.Assets.MaxDownloadBytes, now)
+		// The spool must outlive the pipeline run — the record's asset
+		// reader streams from it (SPEC §31.3).
+		defer cleanup()
+	} else {
+		rec, err = ingest.FileRecord(cmd.Context(), arg, nt, hooks, now)
+	}
+	if err != nil {
+		return err
+	}
 	var res *ingest.Result
 	err = withVaultLock(v, printf, func() error {
 		res, err = runner.RunPush(cmd.Context(), rec)

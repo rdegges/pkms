@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -176,7 +177,7 @@ func TestExtractPDFTextDegradesWhenTempUnavailable(t *testing.T) {
 	require.Error(t, err, "a missing temp dir is an error, not silent success")
 	require.Empty(t, text)
 
-	rec, ferr := FileRecord(p, testTypes, testNow)
+	rec, ferr := FileRecord(context.Background(), p, testTypes, noHooks, testNow)
 	require.NoError(t, ferr, "infrastructure failure must never fail the record")
 	require.Equal(t, "asset", rec.NoteType)
 	require.Contains(t, rec.Body, "> Text extraction failed:")

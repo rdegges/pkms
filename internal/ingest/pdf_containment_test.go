@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -367,7 +368,7 @@ func TestFileRecordPDFDegradesToAssetNote(t *testing.T) {
 	valid := buildMinimalPDF("seed")
 	p := writePDF(t, sameLenMutate(t, valid, "/Type /Catalog", "(![[x.png]]) 1"))
 
-	rec, err := FileRecord(p, testTypes, testNow)
+	rec, err := FileRecord(context.Background(), p, testTypes, noHooks, testNow)
 	require.NoError(t, err, "extraction failure must never fail the record")
 	require.Equal(t, "asset", rec.NoteType)
 	require.Equal(t, "application/pdf", rec.Fields["mime"])
@@ -381,7 +382,7 @@ func TestURLRecordPDFDegradesToAssetNote(t *testing.T) {
 	valid := buildMinimalPDF("seed")
 	g := fakeDownloader{t: t, body: sameLenMutate(t, valid, "/Type /Catalog", "(![[x.png]]) 1")}
 
-	rec, cleanup, err := URLRecord(t.Context(), g, "https://example.com/x.pdf", testTypes, 0, testNow)
+	rec, cleanup, err := URLRecord(t.Context(), g, "https://example.com/x.pdf", testTypes, noHooks, 0, testNow)
 	defer cleanup()
 	require.NoError(t, err)
 	require.Equal(t, "asset", rec.NoteType)

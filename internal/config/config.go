@@ -84,9 +84,15 @@ const DefaultSourceTimeout = 10 * time.Minute
 type Assets struct {
 	Threshold   string `koanf:"threshold"`
 	MaxDownload string `koanf:"max_download"`
+	// TranscribeCmd/ProbeCmd are argv arrays (never shell strings, §31.7);
+	// the local media path is appended as the final argument.
+	TranscribeCmd []string `koanf:"transcribe_cmd"`
+	ProbeCmd      []string `koanf:"probe_cmd"`
+	HookTimeout   string   `koanf:"hook_timeout"`
 
-	ThresholdBytes   int64 `koanf:"-"`
-	MaxDownloadBytes int64 `koanf:"-"`
+	ThresholdBytes   int64         `koanf:"-"`
+	MaxDownloadBytes int64         `koanf:"-"`
+	HookTimeoutDur   time.Duration `koanf:"-"`
 }
 
 // DefaultAssetThreshold is 5 MB DECIMAL (SPEC §31.2): Obsidian Sync's
@@ -115,6 +121,67 @@ func (a *Assets) validate(vaultName string) error {
 	// threshold, or every over-threshold remote asset is unreachable.
 	if a.MaxDownloadBytes <= a.ThresholdBytes {
 		return fmt.Errorf("vault %q: [vaults.assets] max_download (%d bytes) must exceed threshold (%d bytes); over-threshold downloads would be unreachable", vaultName, a.MaxDownloadBytes, a.ThresholdBytes)
+	}
+	// A bare string is rejected against the raw TOML type in Load
+	// (rejectScalarHookCmds); here we guard the present-but-empty and
+	// empty-argv[0] shapes that survive decoding.
+	if err := validateHookArgv(vaultName, "transcribe_cmd", a.TranscribeCmd); err != nil {
+		return err
+	}
+	if err := validateHookArgv(vaultName, "probe_cmd", a.ProbeCmd); err != nil {
+		return err
+	}
+	a.HookTimeoutDur = 10 * time.Minute
+	if a.HookTimeout != "" {
+		d, err := time.ParseDuration(a.HookTimeout)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("vault %q: [vaults.assets] hook_timeout %q: use a positive duration like \"10m\"", vaultName, a.HookTimeout)
+		}
+		a.HookTimeoutDur = d
+	}
+	return nil
+}
+
+// rejectScalarHookCmds inspects the RAW parsed TOML (before koanf's decode
+// coerces a scalar into a one-element slice) and rejects a bare-string
+// transcribe_cmd/probe_cmd on any vault — SPEC §31.7 makes it a config
+// error, never a silently-degraded one-arg command.
+func rejectScalarHookCmds(k *koanf.Koanf, path string) error {
+	vaultsRaw, ok := k.Get("vaults").([]any)
+	if !ok {
+		return nil
+	}
+	for _, vr := range vaultsRaw {
+		vm, ok := vr.(map[string]any)
+		if !ok {
+			continue
+		}
+		assets, ok := vm["assets"].(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := vm["name"].(string)
+		for _, key := range []string{"transcribe_cmd", "probe_cmd"} {
+			v, present := assets[key]
+			if !present {
+				continue
+			}
+			if _, isArray := v.([]any); !isArray {
+				return fmt.Errorf("config %s: vault %q: [vaults.assets] %s must be an argv array like [\"ffprobe\", \"-hide_banner\"], never a shell string", path, name, key)
+			}
+		}
+	}
+	return nil
+}
+
+// validateHookArgv rejects a present-but-unusable media hook (SPEC §31.7):
+// an empty array, or one whose executable is blank.
+func validateHookArgv(vaultName, key string, argv []string) error {
+	if argv == nil {
+		return nil
+	}
+	if len(argv) == 0 || argv[0] == "" {
+		return fmt.Errorf("vault %q: [vaults.assets] %s must be a non-empty argv array like [\"ffprobe\", \"-hide_banner\"], never a shell string", vaultName, key)
 	}
 	return nil
 }
@@ -172,6 +239,14 @@ func Load(path string) (*Config, error) {
 	k := koanf.New(".")
 	if err := k.Load(file.Provider(path), toml.Parser()); err != nil {
 		return nil, fmt.Errorf("read config %s: %w", path, err)
+	}
+	// koanf's decode coerces a scalar into a one-element slice, so
+	// transcribe_cmd/probe_cmd = "…" would silently pass as a one-arg argv.
+	// SPEC §31.7 requires a bare string to be a config error (§24
+	// password_cmd precedent), so reject it against the RAW parsed type
+	// before Unmarshal hides it.
+	if err := rejectScalarHookCmds(k, path); err != nil {
+		return nil, err
 	}
 	if err := k.Unmarshal("", cfg); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
