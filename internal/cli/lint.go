@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -106,17 +105,17 @@ func runLint(cmd *cobra.Command, jsonOut, fix bool, rulesFlag, failOn string) er
 	}
 
 	if jsonOut {
+		// Serialize the (post-fix, if any) findings through the shared
+		// payload+encoder the `pkms mcp` lint tool also uses (§32.6) — one
+		// serializer, no drift.
 		if findings == nil {
 			findings = []lint.Finding{} // stable shape: [] not null (SPEC §8)
 		}
-		summary := map[string]int{"error": 0, "warning": 0}
-		for _, f := range findings {
-			summary[string(f.Severity)]++
+		b, err := encodeJSON(lintPayload(v.Name, findings), true)
+		if err != nil {
+			return err
 		}
-		enc := json.NewEncoder(out)
-		enc.SetIndent("", "  ")
-		payload := map[string]any{"vault": v.Name, "findings": findings, "summary": summary}
-		if err := enc.Encode(payload); err != nil {
+		if _, err := out.Write(b); err != nil {
 			return err
 		}
 	} else {

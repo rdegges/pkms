@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -38,19 +37,20 @@ into nested maps). Output order is deterministic (sorted paths).`,
 			if err != nil {
 				return err
 			}
-			results := query.Run(ix, prof, query.Options{
+			opts := query.Options{
 				Type: typeName, Where: where, Text: text,
 				Backlinks: backlinks, Orphans: orphans,
-			})
+			}
 			out := cmd.OutOrStdout()
 			if jsonOut {
-				if results == nil {
-					results = []query.Result{} // stable shape: [] not null (SPEC §10)
+				b, err := queryJSON(ix, prof, opts)
+				if err != nil {
+					return err
 				}
-				enc := json.NewEncoder(out)
-				enc.SetIndent("", "  ")
-				return enc.Encode(map[string]any{"results": results})
+				_, err = out.Write(b)
+				return err
 			}
+			results := query.Run(ix, prof, opts)
 			for _, r := range results {
 				fmt.Fprintln(out, r.Path)
 			}

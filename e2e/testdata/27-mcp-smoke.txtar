@@ -1,0 +1,29 @@
+# Phase 27: `pkms mcp` runs a read-only stdio MCP server (SPEC §32.6).
+#
+# This smoke proves the real binary starts the server, accepts a JSON-RPC
+# handshake on stdin, and shuts down cleanly (exit 0) when the client closes
+# the pipe — and that a read-only server mutates nothing. Response CONTENT
+# (tools/list advertising exactly query/lint/profile_show, and each tool's
+# output being byte-identical to the CLI --json) is proven deterministically
+# in internal/cli/mcp_test.go over an in-memory transport; testscript closes
+# stdin the instant the canned input ends, which races the server's async
+# response flush, so asserting response bytes here would be flaky.
+
+exec pkms init --path $WORK/vault
+
+# Feed the handshake; the server reads it and exits 0 at EOF (a closed pipe
+# is the normal end of an MCP session, not a failure).
+stdin rpc.jsonl
+exec pkms mcp
+
+# Read-only: nothing the server did touched the vault.
+exec pkms lint
+stdout 'clean: no findings'
+exec pkms history
+stdout 'snapshot|init'
+
+-- rpc.jsonl --
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"profile_show","arguments":{"vault":"vault"}}}
