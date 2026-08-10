@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -71,7 +73,7 @@ type profileView struct {
 	Ingest        ingestView                `json:"ingest"`
 	Indexes       []indexView               `json:"indexes"`
 	Types         []typeView                `json:"types"`
-	Lint          map[string]map[string]any `json:"lint,omitempty"`
+	Lint          map[string]map[string]any `json:"lint"`
 }
 
 type ingestView struct {
@@ -88,10 +90,10 @@ type indexView struct {
 type typeView struct {
 	Name          string   `json:"name"`
 	Scope         []string `json:"scope"`
-	RequireAnyKey []string `json:"require_any_key,omitempty"`
+	RequireAnyKey []string `json:"require_any_key"`
 	Folder        string   `json:"folder"`
 	Filename      string   `json:"filename"`
-	Template      string   `json:"template,omitempty"`
+	Template      string   `json:"template"`
 	// Schema is the note type's JSON Schema inlined byte-faithfully (never
 	// re-marshaled — an agent must validate against exactly what the writer
 	// enforces). Null when the type declares no schema.
@@ -160,7 +162,7 @@ func buildProfileView(p *profile.Profile) (*profileView, error) {
 		Ingest:        ingestView{Clip: p.Ingest.Clip, Asset: p.Ingest.Asset},
 		Indexes:       []indexView{},
 		Types:         []typeView{},
-		Lint:          p.Lint,
+		Lint:          nonNilLint(p.Lint),
 	}
 	for _, ix := range p.Indexes {
 		view.Indexes = append(view.Indexes, indexView{File: ix.File, Lists: ix.Lists, Policy: ix.Policy})
@@ -177,7 +179,7 @@ func buildProfileView(p *profile.Profile) (*profileView, error) {
 		view.Types = append(view.Types, typeView{
 			Name:          t.Name,
 			Scope:         nonNil(t.Scope),
-			RequireAnyKey: t.RequireAnyKey,
+			RequireAnyKey: nonNil(t.RequireAnyKey),
 			Folder:        t.Folder,
 			Filename:      t.Filename,
 			Template:      t.Template,
@@ -192,12 +194,26 @@ func renderProfileView(cmd *cobra.Command, view *profileView, jsonOut bool) erro
 	if jsonOut {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
+		// A note-type schema's raw bytes must survive verbatim — Go's
+		// encoder HTML-escapes <, >, & in a RawMessage by default, which
+		// would corrupt an ejected profile whose schema uses those (e.g. a
+		// `^[^<>]*$` pattern). This output is machine-read, never HTML.
+		enc.SetEscapeHTML(false)
 		return enc.Encode(view)
 	}
 	fmt.Fprintf(out, "%s — %s (schema v%d)\n", view.Name, view.Description, view.SchemaVersion)
 	fmt.Fprintf(out, "attachments: %s\n", orNone(view.Attachments))
 	fmt.Fprintf(out, "scaffold: %s\n", joinOrNone(view.Scaffold))
+	fmt.Fprintf(out, "root_files: %s\n", joinOrNone(view.RootFiles))
 	fmt.Fprintf(out, "ingest: clip=%s asset=%s\n", orNone(view.Ingest.Clip), orNone(view.Ingest.Asset))
+	if len(view.Lint) > 0 {
+		rules := make([]string, 0, len(view.Lint))
+		for r := range view.Lint {
+			rules = append(rules, r)
+		}
+		sort.Strings(rules)
+		fmt.Fprintf(out, "lint: %s\n", joinOrNone(rules))
+	}
 	fmt.Fprintf(out, "\ntypes (classification order):\n")
 	for _, t := range view.Types {
 		schema := "no schema"
@@ -222,6 +238,15 @@ func nonNil(s []string) []string {
 	return s
 }
 
+// nonNilLint keeps the frozen shape's `lint` key stable: a profile with no
+// [lint] table emits `{}`, never omits the key (SPEC §32.2 frozen shape).
+func nonNilLint(m map[string]map[string]any) map[string]map[string]any {
+	if m == nil {
+		return map[string]map[string]any{}
+	}
+	return m
+}
+
 func orNone(s string) string {
 	if s == "" {
 		return "(none)"
@@ -233,12 +258,5 @@ func joinOrNone(s []string) string {
 	if len(s) == 0 {
 		return "(none)"
 	}
-	out := ""
-	for i, v := range s {
-		if i > 0 {
-			out += ", "
-		}
-		out += v
-	}
-	return out
+	return strings.Join(s, ", ")
 }
