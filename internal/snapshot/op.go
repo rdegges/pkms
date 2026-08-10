@@ -12,6 +12,7 @@ import (
 	"github.com/rdegges/pkms/internal/config"
 	"github.com/rdegges/pkms/internal/gitx"
 	"github.com/rdegges/pkms/internal/paths"
+	"github.com/rdegges/pkms/internal/vault"
 )
 
 // OpTrailer marks op commits so history can identify them.
@@ -223,6 +224,10 @@ func readOp(path string) (*Op, error) {
 
 // Undo reverts exactly the op's write list to its pre-op state, as a new op
 // (so undoing an undo works). Concurrent user edits to other files survive.
+// A journaled asset path still referenced by a note OUTSIDE the op's write
+// list survives the undo — idempotent reuse means attachments are shared,
+// and the reference scan runs at undo time because creation-time counts
+// would rot (SPEC §31.5).
 func Undo(v *config.Vault, id string, now time.Time) (*Op, error) {
 	target, err := LoadOp(v.Name, id)
 	if err != nil {
@@ -234,24 +239,67 @@ func Undo(v *config.Vault, id string, now time.Time) (*Op, error) {
 	if len(target.Files) == 0 {
 		return nil, fmt.Errorf("operation %s wrote no files; nothing to undo", target.ID)
 	}
+	restore, err := withoutSharedAssets(v.Path, target.Files)
+	if err != nil {
+		return nil, err
+	}
+	if len(restore) == 0 {
+		return nil, fmt.Errorf("operation %s only wrote attachments other notes still reference; nothing to undo", target.ID)
+	}
 
 	undoOp, err := Begin(v, "undo", now)
 	if err != nil {
 		return nil, err
 	}
 	g := gitx.Git{Dir: v.Path}
-	for _, f := range target.Files {
+	for _, f := range restore {
 		if err := undoOp.Record(f); err != nil {
 			return nil, err
 		}
 	}
-	if err := g.RestorePaths(target.PreCommit, target.Files); err != nil {
+	if err := g.RestorePaths(target.PreCommit, restore); err != nil {
 		return nil, err
 	}
-	if err := undoOp.End(fmt.Sprintf("undo(%s): %d file(s)", target.ID, len(target.Files))); err != nil {
+	if err := undoOp.End(fmt.Sprintf("undo(%s): %d file(s)", target.ID, len(restore))); err != nil {
 		return nil, err
 	}
 	return undoOp, nil
+}
+
+// withoutSharedAssets filters an op's write list down to the paths safe to
+// revert: any path a note outside the write list stamps in its `assets:`
+// frontmatter ledger (SPEC §31.4) is kept on disk.
+func withoutSharedAssets(vaultRoot string, files []string) ([]string, error) {
+	ix, err := vault.BuildIndex(vaultRoot, vault.WalkOptions{})
+	if err != nil {
+		return nil, err
+	}
+	inOp := map[string]bool{}
+	for _, f := range files {
+		inOp[f] = true
+	}
+	referenced := map[string]bool{}
+	for rel, n := range ix.Notes {
+		if inOp[rel] || n.FM == nil || n.FM.Fields == nil {
+			continue
+		}
+		list, ok := n.FM.Fields["assets"].([]any)
+		if !ok {
+			continue
+		}
+		for _, item := range list {
+			if p, ok := item.(string); ok {
+				referenced[p] = true
+			}
+		}
+	}
+	var restore []string
+	for _, f := range files {
+		if !referenced[f] {
+			restore = append(restore, f)
+		}
+	}
+	return restore, nil
 }
 
 // HistoryEntry is one snapshot/op commit.

@@ -33,6 +33,11 @@ type Asset struct {
 	SHA256   string
 	Size     int64
 	Open     func() (io.ReadCloser, error)
+	// LocalPath, when non-empty, is the absolute path of a file the user
+	// already owns on this machine; the storage policy references an
+	// over-threshold local asset in place instead of copying it (SPEC
+	// §31.2). Additive to the frozen §7 shape.
+	LocalPath string
 }
 
 // Cursor is source-private resume state (e.g. IMAP UIDVALIDITY+UIDNEXT),

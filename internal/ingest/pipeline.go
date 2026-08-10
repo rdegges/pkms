@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/rdegges/pkms/internal/assets"
 	"github.com/rdegges/pkms/internal/config"
 	"github.com/rdegges/pkms/internal/lock"
 	"github.com/rdegges/pkms/internal/paths"
@@ -129,6 +133,86 @@ func (r *Runner) RunSource(ctx context.Context, ic config.IngesterConfig) (*Resu
 	return r.run(ctx, ic, ing)
 }
 
+// storeAssets places rec's assets per the policy (SPEC §31.2), stamps the
+// `assets:` frontmatter ledger, and appends the uniform `## Attachments`
+// section (SPEC §31.4). No-op for asset-less records.
+func (r *Runner) storeAssets(rec *Record) ([]assets.Stored, error) {
+	if len(rec.Assets) == 0 {
+		return nil, nil
+	}
+	pol := assets.Policy{
+		VaultRoot:      r.Vault.Path,
+		AttachmentsDir: r.Profile.Attachments,
+		Threshold:      r.Vault.Assets.ThresholdBytes,
+		CASDir:         paths.DataDir("assets"),
+	}
+	stored := make([]assets.Stored, 0, len(rec.Assets))
+	for _, a := range rec.Assets {
+		s, err := pol.Store(assets.Source{
+			Filename:  a.Filename,
+			SHA256:    a.SHA256,
+			Size:      a.Size,
+			Open:      a.Open,
+			LocalPath: a.LocalPath,
+		})
+		if err != nil {
+			r.removeNewAssets(stored)
+			return nil, fmt.Errorf("store asset %q: %w", a.Filename, err)
+		}
+		stored = append(stored, s)
+	}
+
+	ledger := make([]any, len(stored))
+	for i, s := range stored {
+		ledger[i] = s.Path
+	}
+	rec.Fields["assets"] = ledger
+	// A bodyless asset note starts straight at ## Attachments — exactly one
+	// blank line after the frontmatter fence, never two.
+	body := strings.TrimRight(rec.Body, "\n")
+	if body == "" {
+		rec.Body = attachmentsSection(stored)
+	} else {
+		rec.Body = body + "\n\n" + attachmentsSection(stored)
+	}
+	return stored, nil
+}
+
+// attachmentsSection renders the uniform `## Attachments` body section:
+// vault-relative wikilink embeds (path-qualified — duplicate-basename-safe
+// per SPEC §5) for in-vault assets, plain links for external paths. Link
+// labels come from the STORED basename (sanitized), never the raw
+// emitter-supplied filename — hostile names must not smuggle markup
+// (SPEC §28.9 posture).
+func attachmentsSection(stored []assets.Stored) string {
+	var b strings.Builder
+	b.WriteString("## Attachments\n\n")
+	for _, s := range stored {
+		if s.InVault {
+			fmt.Fprintf(&b, "- ![[%s]]\n", s.Path)
+			continue
+		}
+		u := url.URL{Scheme: "file", Path: filepath.ToSlash(s.Path)}
+		fmt.Fprintf(&b, "- [%s](%s)\n", profile.SanitizeAssetFilename(filepath.Base(s.Path)), u.String())
+	}
+	return b.String()
+}
+
+// removeNewAssets best-effort deletes assets newly stored for a record
+// whose note never landed (SPEC §31.5); reused assets always survive.
+func (r *Runner) removeNewAssets(stored []assets.Stored) {
+	for _, s := range stored {
+		if !s.New {
+			continue
+		}
+		p := s.Path
+		if s.InVault {
+			p = filepath.Join(r.Vault.Path, filepath.FromSlash(s.Path))
+		}
+		_ = os.Remove(p)
+	}
+}
+
 // oneShot replays exactly one pre-built record (push mode, SPEC §19).
 type oneShot struct{ rec Record }
 
@@ -211,10 +295,21 @@ func (r *Runner) run(ctx context.Context, ic config.IngesterConfig, ing Ingester
 		}
 		rec.Fields["source_id"] = rec.NaturalKey
 
+		// Assets store BEFORE the note write; a store failure is an
+		// execution error — "this machine is bad", never a quarantine
+		// (SPEC §31.5).
+		stored, err := r.storeAssets(&rec)
+		if err != nil {
+			return err
+		}
+
 		rel, err := writer.Write(r.Vault.Path, r.Profile, rec.NoteType, rec.Fields, rec.Body, quarantineDir, Key(rec.NaturalKey), r.Now())
 		if errors.Is(err, writer.ErrQuarantined) {
 			// The quarantine file is durable (writer fsyncs) — safe to
-			// mark the key seen so re-fetches skip it (SPEC §7).
+			// mark the key seen so re-fetches skip it (SPEC §7). Assets
+			// newly stored for this record are removed; reused ones
+			// belong to an earlier note (SPEC §31.5).
+			r.removeNewAssets(stored)
 			if qerr := st.Quarantine(rec.NaturalKey, err.Error(), r.Now()); qerr != nil {
 				return qerr
 			}
@@ -222,10 +317,21 @@ func (r *Runner) run(ctx context.Context, ic config.IngesterConfig, ing Ingester
 			return nil
 		}
 		if err != nil {
+			r.removeNewAssets(stored)
 			return err
 		}
 		if err := op.Record(rel); err != nil {
 			return err
+		}
+		// New in-vault attachments ride the op journal so `pkms undo`
+		// removes a note and its attachments together; external paths are
+		// outside the vault and outside git (SPEC §31.5).
+		for _, s := range stored {
+			if s.InVault && s.New {
+				if err := op.Record(s.Path); err != nil {
+					return err
+				}
+			}
 		}
 		if err := st.Ack(rec.NaturalKey, rel, r.Now()); err != nil {
 			return err

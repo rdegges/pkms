@@ -21,6 +21,7 @@ root_files = []
 
 [ingest]
 clip = "raw-clip" # ingested URLs/feeds/email land in Resources/Clips/Inbox
+asset = "asset"   # binary ingests (PDF/media/unknown), same inbox (SPEC §31.4)
 
 # ---- Note types (order matters: content-triggered types precede fallbacks) --
 
@@ -83,6 +84,17 @@ filename = "{{.title}}"
 name = "session-trace"
 scope = ["Resources/Personal/Session Traces/*.md"]
 schema = "schemas/session-trace.schema.json"
+
+# asset declares BEFORE raw-clip: TypeOf is first-match and both share the
+# clip inbox — the sha256 trigger keeps asset notes off the raw-clip schema
+# (SPEC §31.4).
+[[types]]
+name = "asset"
+scope = ["Resources/Clips/Inbox/*.md", "Resources/Clips/Processed/*.md"]
+require_any_key = ["sha256"]
+schema = "schemas/asset.schema.json"
+folder = "Resources/Clips/Inbox"
+filename = "{{tsname .created}} - {{.title}}"
 
 [[types]]
 name = "raw-clip"

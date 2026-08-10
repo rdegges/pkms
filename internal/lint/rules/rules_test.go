@@ -159,6 +159,21 @@ func TestFrontmatterRules(t *testing.T) {
 	require.Equal(t, 1, fixables, "only 2026/01/02 is unambiguous: %+v", dates)
 }
 
+func TestDateRuleAcceptsRFC3339Timestamps(t *testing.T) {
+	// The ingest pipeline stamps `created` as RFC3339 with offset (SPEC
+	// §20); the rule must not flag every ingested note (SPEC §31.10 —
+	// latent phase-2 conflict caught by the asset e2e).
+	fs := run(t, map[string]string{
+		"People/Snyk/Stamped.md": "---\nlast_met: 2026-08-09T12:34:56Z\nmeeting_count: 1\ntopics: [ai]\n---\nx\n",
+		"People/Snyk/Offset.md":  "---\nlast_met: 2026-08-09T12:34:56-07:00\nmeeting_count: 1\ntopics: [ai]\n---\nx\n",
+		"People/Snyk/Trunc.md":   "---\nlast_met: 2026-08-09T12:34\nmeeting_count: 1\ntopics: [ai]\n---\nx\n",
+	}, "date-format-iso")
+	m := byRule(fs)
+	dates := m["date-format-iso"]
+	require.Len(t, dates, 1, "full RFC3339 passes; a truncated timestamp still fails: %+v", dates)
+	require.Contains(t, dates[0].Path, "Trunc")
+}
+
 func TestSchemaRule(t *testing.T) {
 	fs := run(t, map[string]string{
 		// Missing has_transcript + duration; wrong time type.

@@ -58,6 +58,19 @@ schema_version = 1
 name = "test"
 description = "test profile"
 scaffold = ["Inbox"]
+attachments = "Attachments"
+
+[ingest]
+clip = "clip"
+asset = "asset"
+
+[[types]]
+name = "asset"
+scope = ["Inbox/*.md"]
+require_any_key = ["sha256"]
+schema = "schemas/asset.schema.json"
+folder = "Inbox"
+filename = "{{.title}}"
 
 [[types]]
 name = "clip"
@@ -66,6 +79,20 @@ schema = "schemas/clip.schema.json"
 folder = "Inbox"
 filename = "{{.title}}"
 `)
+	writeFile(t, filepath.Join(dir, "schemas", "asset.schema.json"), `{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["title", "source", "created", "tags", "mime", "size", "sha256"],
+  "properties": {
+    "title": {"type": "string"},
+    "source": {"type": "string", "pattern": "^(https?://|mid:|file://)"},
+    "created": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}"},
+    "tags": {"type": "array", "items": {"type": "string"}, "contains": {"const": "asset"}},
+    "mime": {"type": "string"},
+    "size": {"type": "integer", "minimum": 0},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}`)
 	writeFile(t, filepath.Join(dir, "schemas", "clip.schema.json"), `{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
@@ -107,12 +134,14 @@ func testVault(t *testing.T) *config.Vault {
 		out, err := cmd.CombinedOutput()
 		require.NoError(t, err, "git %v: %s", args, out)
 	}
-	return &config.Vault{Name: "testvault", Path: dir, Profile: "test"}
+	return &config.Vault{Name: "testvault", Path: dir, Profile: "test",
+		Assets: config.Assets{ThresholdBytes: config.DefaultAssetThreshold, MaxDownloadBytes: 100 << 20}}
 }
 
 func testRunner(t *testing.T) (*Runner, *config.Vault) {
 	t.Helper()
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
 	v := testVault(t)
 	return &Runner{Vault: v, Profile: testProfile(t), Now: func() time.Time { return testNow }}, v
 }

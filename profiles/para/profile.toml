@@ -4,16 +4,29 @@ description = "PARA: Projects / Areas / Resources / Archive"
 
 scaffold = ["_Inbox", "Projects", "Areas", "Resources", "Archive"]
 root_files = []
+attachments = "Attachments" # ingested binaries ≤ threshold land here (SPEC §31.2)
 
 [ingest]
-clip = "clip" # everything ingested lands in _Inbox/ for later sorting
+clip = "clip"   # everything ingested lands in _Inbox/ for later sorting
+asset = "asset" # binary ingests (PDF/media/unknown) — same folder, own schema
 
-# The clip type is the only typed note in the generic profile (phase-2
-# question-round decision 1); otherwise only profile-agnostic lint rules
-# (frontmatter well-formedness, links, junk files, placeholders) apply.
+# The clip and asset types are the only typed notes in the generic profile
+# (phase-2 question-round decision 1); otherwise only profile-agnostic lint
+# rules (frontmatter well-formedness, links, junk files, placeholders) apply.
 # The capture folder is named `_Inbox` so Obsidian's file explorer floats
 # it to the very top (a leading underscore outranks every other character
 # in Obsidian's natural sort) — you see your unsorted captures first.
+
+# asset declares BEFORE clip: TypeOf is first-match and both share the
+# capture folder — without the sha256 trigger every asset note would
+# classify as clip and fail the clip schema (SPEC §31.4).
+[[types]]
+name = "asset"
+scope = ["_Inbox/*.md"]
+require_any_key = ["sha256"]
+schema = "schemas/asset.schema.json"
+folder = "_Inbox"
+filename = "{{tsname .created}} - {{.title}}"
 
 [[types]]
 name = "clip"

@@ -1,0 +1,41 @@
+# Phase 18: the in-vault half of the asset storage policy (SPEC §31.2) end
+# to end — a binary under the threshold is copied into Attachments/, the
+# note lints CLEAN (the §31.10 class of bug: an ingest contract that makes
+# every captured note lint-error), doctor stays green, and `pkms undo`
+# takes the note and its attachment away together (SPEC §31.5).
+
+exec pkms init --path $WORK/vault
+
+exec pkms ingest report.pdf
+stdout 'ingested → _Inbox/.* - report\.md'
+exists $WORK/vault/Attachments/report.pdf
+
+# The whole point of a wikilink embed: the vault must be healthy afterwards.
+# lint exits 0 — the asset note, its schema, and its ![[Attachments/...]]
+# embed all resolve. A regression here breaks EVERY asset a user captures.
+exec pkms lint
+exec pkms doctor
+
+# A second, DIFFERENT binary with the same basename gets the deterministic
+# " 2" suffix before the extension — the first file is never overwritten.
+exec sh -c 'cp other.pdf report.pdf'
+exec pkms ingest report.pdf
+exists $WORK/vault/'Attachments/report 2.pdf'
+grep 'fake pdf payload' $WORK/vault/Attachments/report.pdf
+exec pkms lint
+
+# Undo the LAST ingest: its note and its newly stored attachment go away
+# together, and the first note's attachment is untouched.
+exec pkms undo last --vault vault
+! exists $WORK/vault/'Attachments/report 2.pdf'
+exists $WORK/vault/Attachments/report.pdf
+
+# The vault is still healthy after the undo: no dangling embed is left.
+exec pkms lint
+
+-- report.pdf --
+%PDF-1.5
+fake pdf payload
+-- other.pdf --
+%PDF-1.5
+a different pdf payload entirely

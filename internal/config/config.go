@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,6 +41,8 @@ type Vault struct {
 	Path     string   `koanf:"path"`
 	Profile  string   `koanf:"profile"`
 	Snapshot Snapshot `koanf:"snapshot"`
+	// Assets holds the [vaults.assets] storage policy knobs (SPEC §31.2).
+	Assets Assets `koanf:"assets"`
 	// Per-vault lint overrides: rule id -> options ("enabled", "severity", ...).
 	Lint map[string]map[string]any `koanf:"lint"`
 	// Raw [[vaults.ingesters]] tables; validated into Sources.
@@ -74,6 +77,81 @@ func (ic IngesterConfig) Source() string {
 
 // DefaultSourceTimeout bounds one source's run (SPEC §17).
 const DefaultSourceTimeout = 10 * time.Minute
+
+// Assets is the [vaults.assets] table (SPEC §31.2/§31.3). Sizes are
+// human-readable strings; the parsed byte values live in the *Bytes
+// fields.
+type Assets struct {
+	Threshold   string `koanf:"threshold"`
+	MaxDownload string `koanf:"max_download"`
+
+	ThresholdBytes   int64 `koanf:"-"`
+	MaxDownloadBytes int64 `koanf:"-"`
+}
+
+// DefaultAssetThreshold is 5 MB DECIMAL (SPEC §31.2): Obsidian Sync's
+// Standard plan caps files at 5 MB, and a binary 5 MiB default would fail
+// sync in exactly the 5.00–5.24 MB band the threshold exists to protect.
+const DefaultAssetThreshold = 5_000_000
+
+func (a *Assets) validate(vaultName string) error {
+	a.ThresholdBytes = DefaultAssetThreshold
+	a.MaxDownloadBytes = 100 << 20
+	if a.Threshold != "" {
+		n, err := ParseSize(a.Threshold)
+		if err != nil {
+			return fmt.Errorf("vault %q: [vaults.assets] threshold: %w", vaultName, err)
+		}
+		a.ThresholdBytes = n
+	}
+	if a.MaxDownload != "" {
+		n, err := ParseSize(a.MaxDownload)
+		if err != nil {
+			return fmt.Errorf("vault %q: [vaults.assets] max_download: %w", vaultName, err)
+		}
+		a.MaxDownloadBytes = n
+	}
+	// The §31.3 table constraint: the download cap must exceed the
+	// threshold, or every over-threshold remote asset is unreachable.
+	if a.MaxDownloadBytes <= a.ThresholdBytes {
+		return fmt.Errorf("vault %q: [vaults.assets] max_download (%d bytes) must exceed threshold (%d bytes); over-threshold downloads would be unreachable", vaultName, a.MaxDownloadBytes, a.ThresholdBytes)
+	}
+	return nil
+}
+
+var sizeRe = regexp.MustCompile(`^(\d+)\s*(B|KB|MB|GB|KiB|MiB|GiB)?$`)
+
+// ParseSize parses a human size string: decimal units (KB/MB/GB,
+// 1000-based), binary units (KiB/MiB/GiB, 1024-based), or bare bytes.
+func ParseSize(s string) (int64, error) {
+	m := sizeRe.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return 0, fmt.Errorf("bad size %q: use bytes or a unit suffix like \"5MB\" or \"25MiB\"", s)
+	}
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("bad size %q: %w", s, err)
+	}
+	mult := int64(1)
+	switch m[2] {
+	case "KB":
+		mult = 1000
+	case "MB":
+		mult = 1000 * 1000
+	case "GB":
+		mult = 1000 * 1000 * 1000
+	case "KiB":
+		mult = 1 << 10
+	case "MiB":
+		mult = 1 << 20
+	case "GiB":
+		mult = 1 << 30
+	}
+	if n > (1<<62)/mult {
+		return 0, fmt.Errorf("size %q overflows", s)
+	}
+	return n * mult, nil
+}
 
 type Snapshot struct {
 	Remote string `koanf:"remote"`
@@ -134,6 +212,9 @@ func (c *Config) validate() error {
 			return fmt.Errorf("vault %q: no profile set and no [defaults].profile", v.Name)
 		}
 
+		if err := v.Assets.validate(v.Name); err != nil {
+			return err
+		}
 		if err := v.validateIngesters(); err != nil {
 			return fmt.Errorf("vault %q: %w", v.Name, err)
 		}

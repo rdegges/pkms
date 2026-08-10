@@ -80,20 +80,18 @@ func runIngestPush(cmd *cobra.Command, jsonOut bool, arg string) error {
 	if err != nil {
 		return err
 	}
-	noteType := prof.Ingest.Clip
-	if noteType == "" {
-		return fmt.Errorf(`profile %q declares no ingest note type; add to its profile.toml:
-
-  [ingest]
-  clip = "<note type for ingested clips>"`, prof.Name)
-	}
+	nt := ingest.NoteTypes{ProfileName: prof.Name, Clip: prof.Ingest.Clip, Asset: prof.Ingest.Asset}
 
 	now := time.Now()
 	var rec ingest.Record
 	if strings.HasPrefix(arg, "http://") || strings.HasPrefix(arg, "https://") {
-		rec, err = ingest.URLRecord(cmd.Context(), fetch.New(), arg, noteType, now)
+		var cleanup func()
+		rec, cleanup, err = ingest.URLRecord(cmd.Context(), fetch.New(), arg, nt, v.Assets.MaxDownloadBytes, now)
+		// The spool must outlive the pipeline run — the record's asset
+		// reader streams from it (SPEC §31.3).
+		defer cleanup()
 	} else {
-		rec, err = ingest.FileRecord(arg, noteType, now)
+		rec, err = ingest.FileRecord(arg, nt, now)
 	}
 	if err != nil {
 		return err

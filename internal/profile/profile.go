@@ -42,6 +42,8 @@ type Manifest struct {
 type IngestTypes struct {
 	// Clip is the note type for ingested clips (URLs, feeds, email).
 	Clip string `toml:"clip"`
+	// Asset is the note type for ingested binaries (SPEC §31.4).
+	Asset string `toml:"asset"`
 }
 
 // Type declares one note type. Order matters: classification returns the
@@ -306,9 +308,13 @@ const maxFilenameBytes = 180
 // and must never smuggle separators or wikilink syntax into paths — and
 // bounds the length so an overlong title can't blow the filesystem limit.
 func sanitizeFilename(name string) string {
+	return sanitizeChars(name, maxFilenameBytes)
+}
+
+func sanitizeChars(name string, maxBytes int) string {
 	var b strings.Builder
 	for _, r := range name {
-		if b.Len() >= maxFilenameBytes {
+		if b.Len() >= maxBytes {
 			break
 		}
 		switch {
@@ -321,6 +327,25 @@ func sanitizeFilename(name string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// SanitizeAssetFilename applies the sanitizeFilename character rules to a
+// stored attachment's basename with EXTENSION-PRESERVING truncation (SPEC
+// §31.2): an overlong hostile name must lose stem bytes, never the
+// extension Obsidian and the OS dispatch on. An implausibly long
+// "extension" (> 16 bytes) is treated as no extension at all.
+func SanitizeAssetFilename(name string) string {
+	ext := path.Ext(name)
+	if len(ext) > 16 {
+		ext = ""
+	}
+	stem := strings.TrimSuffix(name, ext)
+	ext = sanitizeChars(ext, len(ext))
+	budget := maxFilenameBytes - len(ext)
+	if budget < 1 {
+		budget = 1
+	}
+	return sanitizeChars(stem, budget) + ext
 }
 
 func renderConfined(tmpl string, fields map[string]any) (string, error) {

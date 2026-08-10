@@ -226,6 +226,11 @@ type Asset struct {
     SHA256   string
     Size     int64
     Open     func() (io.ReadCloser, error)
+    // LocalPath, when non-empty, is the absolute path of a file the user
+    // already owns on this machine; the storage policy references an
+    // over-threshold local asset in place instead of copying it (§31.2).
+    // Added by amendment §31.11.
+    LocalPath string
 }
 
 // EmitFunc delivers one record to the pipeline. It returns ONLY after the
@@ -1268,4 +1273,27 @@ carried assets.
   link index) — `asset-refs` owns only the frontmatter ledger.
 - Gate discipline: the check counts as installed only once a test has
   observed it rejecting a seeded dangling ref (§15).
+
+### 31.10 Amendment: `date-format-iso` accepts RFC3339 (found during PR2)
+
+A latent phase-2 conflict, exposed by the first e2e script to run `lint`
+over an ingested note: §20 stamps `created` as a full RFC3339 timestamp
+with offset, while `date-format-iso` (docs/LINT-RULES.md) demanded a bare
+`YYYY-MM-DD` and lists `created` among its default keys — so every note
+ingested since v0.2.0 lint-errors. Both built-in profiles are affected
+(`rdegges` lists `created` explicitly). Resolution: the rule also passes
+any value that parses as full RFC3339 — a valid timestamp is not a
+malformed date; the rule exists to catch `2026/07/15`-style drift and
+empties, not the ingest contract. Frozen docs get amendments, never
+silent drift (§28 preamble).
+
+### 31.11 Amendment: `Asset.LocalPath` (additive to §7, 2026-08-09)
+
+§31.2's reference-in-place branch needs to know that an over-threshold
+asset already exists as a user-owned local file — the frozen §7 `Asset`
+shape had no way to say so. `Asset` gains an optional `LocalPath` field
+(absolute path; empty for remote/attachment bytes). Remote records never
+set it; a wrong value cannot escape the policy's placement rules because
+in-vault and CAS placement ignore it. Judged and accepted at the PR2 BDFL
+gate as an additive change to the frozen contract.
 
