@@ -1,0 +1,33 @@
+# Phase 26: `pkms profile show` (SPEC §32.2) — the vault-agnostic seam.
+# An agent reads a profile's structure here (folders, note types in
+# classification order, the ingest/capture mapping, inlined schemas)
+# instead of hard-coding folder names.
+
+exec pkms init --path $WORK/vault
+
+# By vault: resolves to the vault's profile (para).
+exec pkms profile show --vault vault --json
+stdout '"name": "para"'
+stdout '"clip": "clip"'
+stdout '"asset": "asset"'
+# The capture folder is discoverable from data (not assumed).
+stdout '"folder": "_Inbox"'
+# The asset type's schema is inlined, not just named.
+stdout '"sha256"'
+
+# By name works without a configured vault too.
+exec pkms profile show rdegges --json
+stdout '"name": "rdegges"'
+
+# Human output is readable.
+exec pkms profile show para
+stdout 'classification order'
+stdout 'ingest: clip=clip asset=asset'
+
+# Name AND --vault is a usage error.
+! exec pkms profile show para --vault vault
+stderr 'OR --vault'
+
+# An unknown profile errors.
+! exec pkms profile show not-a-real-profile
+stderr 'not a built-in'
