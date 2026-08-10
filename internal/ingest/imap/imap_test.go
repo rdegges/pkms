@@ -3,6 +3,7 @@ package imap
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -253,7 +254,7 @@ func TestRecordMultipartPrefersHTML(t *testing.T) {
 	require.NotContains(t, rec.Body, "plain version")
 }
 
-func TestRecordListsAttachments(t *testing.T) {
+func TestRecordStoresAttachments(t *testing.T) {
 	raw := []byte("Message-Id: <att@x>\r\n" +
 		"From: a@example.com\r\n" +
 		"Date: Mon, 03 Aug 2026 08:00:00 +0000\r\n" +
@@ -274,10 +275,49 @@ func TestRecordListsAttachments(t *testing.T) {
 	m := newTestIMAP(t, nil)
 	rec, err := m.record(raw, internalDate)
 	require.NoError(t, err)
-	require.Contains(t, rec.Body, "## Attachments")
-	require.Contains(t, rec.Body, "not stored; attachment support lands in phase 2.5")
-	require.NotContains(t, rec.Body, "../", "traversal neutralized in the listed name")
-	require.Contains(t, rec.Body, "application/pdf")
+	// The attachment now flows to the pipeline as a Record.Asset (SPEC
+	// §31.8), which stores it and renders ## Attachments — the record no
+	// longer builds that section or claims "not stored".
+	require.NotContains(t, rec.Body, "not stored")
+	require.NotContains(t, rec.Body, "phase 2.5")
+	require.Len(t, rec.Assets, 1, "under-cap attachment is carried as an asset")
+	require.NotContains(t, rec.Assets[0].Filename, "/", "no path separator survives")
+	require.NotContains(t, rec.Assets[0].Filename, "..", "traversal neutralized in the stored name")
+	require.True(t, strings.HasSuffix(rec.Assets[0].Filename, "evil.pdf"), "got %q", rec.Assets[0].Filename)
+	require.Len(t, rec.Assets[0].SHA256, 64)
+
+	rc, err := rec.Assets[0].Open()
+	require.NoError(t, err)
+	got, err := io.ReadAll(rc)
+	require.NoError(t, err)
+	require.NoError(t, rc.Close())
+	// go-message strips the trailing CRLF (it delimits the MIME boundary).
+	require.Equal(t, "%PDF-fake", string(got), "the asset reader yields the decoded bytes")
+	require.Equal(t, int64(len(got)), rec.Assets[0].Size, "size matches the stored bytes")
+}
+
+func TestRecordListsOversizeAttachmentUnstored(t *testing.T) {
+	big := strings.Repeat("A", (10<<20)+1) // one byte over the per-part cap
+	raw := []byte("Message-Id: <big@x>\r\n" +
+		"From: a@example.com\r\n" +
+		"Subject: Huge attachment\r\n" +
+		"Content-Type: multipart/mixed; boundary=B\r\n" +
+		"\r\n" +
+		"--B\r\n" +
+		"Content-Type: text/plain\r\n\r\nbody\r\n" +
+		"--B\r\n" +
+		"Content-Type: application/octet-stream\r\n" +
+		"Content-Disposition: attachment; filename=\"big.bin\"\r\n" +
+		"\r\n" + big + "\r\n" +
+		"--B--\r\n")
+
+	m := newTestIMAP(t, nil)
+	rec, err := m.record(raw, internalDate)
+	require.NoError(t, err)
+	require.Empty(t, rec.Assets, "an over-cap attachment is never stored")
+	require.Contains(t, rec.Body, "## Oversized attachments (not stored)")
+	require.Contains(t, rec.Body, "big.bin")
+	require.Contains(t, rec.Body, "exceeds the 10 MiB per-attachment limit")
 }
 
 func TestRecordNoBody(t *testing.T) {

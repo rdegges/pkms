@@ -769,9 +769,12 @@ One shared hardened HTTP client for all outbound fetches (push, RSS):
   no — emails are already "content"; straight html-to-markdown), else
   `text/plain` verbatim; multipart walk capped at depth 10 and 10 MiB per
   part; unknown charset is non-fatal (best-effort decode, note the fact in
-  the body). Attachments are NOT stored in phase 2 — the body ends with an
-  `## Attachments` list naming them (name, type, size) so nothing is
-  silently dropped; storage lands with the 2.5 asset policy.
+  the body). Attachments were NOT stored in phase 2 — **superseded by
+  §31.8**: under-cap attachments now flow to the pipeline as
+  `Record.Assets` and store via the §31.2 policy (the pipeline stamps
+  `assets:` and renders `## Attachments`), while an over-cap part is
+  listed unstored under `## Oversized attachments (not stored)` — nothing
+  silently dropped.
 - Record fields: `title` (RFC 2047–decoded Subject; empty → `(no subject)`),
   `source` (`mid:<message-id>` — RFC 2392 scheme; question-round decision 4),
   `created` (Date header → RFC3339; unparseable → INTERNALDATE), `from`,
