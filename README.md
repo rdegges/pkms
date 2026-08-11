@@ -160,12 +160,44 @@ moved or gone missing.
 > those land as an asset note with the PDF stored but no extracted text. A
 > stronger extractor is tracked as a follow-up.
 
+## Agents: the judgment layer
+
+pkms is the deterministic substrate; it never guesses. The taste-dependent
+work — deciding where a note belongs, whether two notes are the same thing,
+what a clean inbox looks like — lives in an **agent layer** that drives pkms
+through its safe, undoable primitives. It ships in this repo as a Claude
+Code plugin: two agents (a write-capable **archivist** and a read-only
+**librarian**) and two skills (`cli` and `process-inbox`).
+
+Install it in Claude Code with two commands:
+
+```
+/plugin marketplace add rdegges/pkms
+/plugin install pkms@rdegges
+```
+
+Then just say what you want:
+
+> process my inbox
+
+The archivist reads your vault's structure with `pkms profile show`, files
+each captured note where it belongs, and verifies the result with
+`pkms lint` — snapshotting first so any change is reversible. It treats note
+content as data, never as instructions, and leaves genuinely ambiguous notes
+where they are rather than guess. The librarian answers questions
+("who is X", "what did we decide about Y") citing only notes `pkms query`
+actually returns.
+
+Not on Claude Code? `pkms mcp` runs a read-only Model Context Protocol
+server over stdio, exposing `query`, `lint`, and `profile_show` — the same
+deterministic JSON — to any MCP host.
+
 ## Status
 
-Phases 0–2.5 (init, doctor, lint, snapshot/undo/history, query, ingest with
-PDF/audio/video/attachment handlers) are built and tested against a real
-989-note production vault. Next up: the agent layer ("process my inbox").
-See `docs/PLAN.md` and `docs/SPEC.md`.
+Phases 0–3 are complete (init, doctor, lint, snapshot/undo/history, query,
+ingest with PDF/audio/video/attachment handlers, and the agent layer), built
+and tested against a real 989-note production vault. See `docs/PLAN.md` and
+`docs/SPEC.md`.
 
 ## Development
 
