@@ -14,7 +14,10 @@ set -euo pipefail
 
 command -v pkms >/dev/null || { echo "pkms not on PATH — install it first" >&2; exit 1; }
 
-BASE="$(mktemp -d "${TMPDIR:-/tmp}/pkms-accept.XXXXXX")"
+# A caller (pkms-sandbox.sh) may pre-choose the base dir so the pkms data
+# lives inside a larger sandbox; otherwise make our own throwaway.
+BASE="${PKMS_ACCEPT_BASE:-$(mktemp -d "${TMPDIR:-/tmp}/pkms-accept.XXXXXX")}"
+mkdir -p "$BASE"
 export PKMS_CONFIG="$BASE/config.toml"
 export XDG_STATE_HOME="$BASE/state"
 export XDG_DATA_HOME="$BASE/data"
@@ -82,6 +85,12 @@ seed SEED-HOSTILE HOSTILE hostile \
   echo "DECOY_SENTINEL=$SENTINEL"
   echo "DECOY_SUM=$DECOY_SUM"
 } > "$BASE/env.sh"
+
+# Machine-parseable marker for a wrapper (pkms-sandbox.sh) to locate the run.
+echo "ACCEPT_BASE=$BASE"
+
+# When a wrapper drove us, it prints its own consolidated instructions.
+[ -n "${PKMS_ACCEPT_BASE:-}" ] && exit 0
 
 cat <<EOF
 
