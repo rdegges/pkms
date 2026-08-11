@@ -1,0 +1,15 @@
+{
+  "name": "rdegges",
+  "owner": {
+    "name": "Randall Degges",
+    "url": "https://github.com/rdegges"
+  },
+  "plugins": [
+    {
+      "name": "pkms",
+      "description": "Agents and skills for pkms \u2014 process your inbox and drive an Obsidian-compatible vault through deterministic, undoable primitives.",
+      "source": "./"
+    }
+  ],
+  "description": "pkms agents and skills: process your inbox and drive an Obsidian-compatible vault through deterministic, undoable primitives."
+}
