@@ -43,11 +43,36 @@ func TestCanonicalBlockCoveredBySubstrate(t *testing.T) {
 
 	substrate, err := os.ReadFile(filepath.Join(root, "e2e", "testdata", "28-agent-substrate.txtar"))
 	require.NoError(t, err)
-	txt := string(substrate)
+	executed := substrateExecutedSubs(string(substrate))
 	for sub := range subs {
-		require.Contains(t, txt, "pkms "+sub,
-			"canonical block names `pkms %s` but the substrate e2e never exercises it", sub)
+		require.True(t, executed[sub],
+			"canonical block names `pkms %s` but the substrate e2e never EXECUTES it (a comment or fixture mention does not count)", sub)
 	}
+}
+
+// substrateExecutedSubs returns the set of pkms subcommands the txtar
+// actually RUNS — parsed only from `exec pkms …` / `! exec pkms …` script
+// lines above the first `-- file --` archive marker. A `pkms` mention in a
+// comment or a fixture body must NOT satisfy the coverage gate (that was a
+// false green the PR #14 review caught).
+func substrateExecutedSubs(txtar string) map[string]bool {
+	out := map[string]bool{}
+	for _, ln := range strings.Split(txtar, "\n") {
+		if strings.HasPrefix(ln, "-- ") { // start of the file archive
+			break
+		}
+		t := strings.TrimSpace(ln)
+		t = strings.TrimPrefix(t, "! ")
+		if !strings.HasPrefix(t, "exec pkms") {
+			continue
+		}
+		if inv := pkmsInvocation(strings.TrimPrefix(t, "exec ")); inv != "" {
+			if s := leadingSubcommand(inv); s != "" {
+				out[s] = true
+			}
+		}
+	}
+	return out
 }
 
 // leadingSubcommand returns the top-level subcommand of a pkms invocation
