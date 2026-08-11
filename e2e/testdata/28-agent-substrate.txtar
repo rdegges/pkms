@@ -1,0 +1,34 @@
+# Phase 28: the substrate under the process-inbox skill (SPEC §32.7 layer 1).
+# Every pkms command the skill's canonical §32.4a block names must actually
+# work against the binary — this drives them in order against a seeded
+# fixture vault. The MOVE step is the agent's judgment (its own file tools),
+# not a pkms command, so it isn't exercised here; the live run (PR7) covers
+# that. TestCanonicalBlockCoveredBySubstrate ties this file to the skill so
+# the two can't drift.
+
+exec pkms init --path $WORK/vault
+
+# Empty capture folder: the skill's empty-inbox branch — query returns an
+# empty result set, and there is nothing to file.
+exec pkms query --type clip --json
+stdout '"results": \[\]'
+
+# Seed the capture folder: a local markdown file ingests as a clip note.
+exec pkms ingest note.md --json
+stdout '"new": 1'
+
+# --- the canonical sequence, command by command ---
+exec pkms doctor --json
+exec pkms profile show --vault vault --json
+stdout '"clip": "clip"'
+exec pkms query --type clip --json
+stdout '"path"'
+exec pkms snapshot
+exec pkms lint --fix
+exec pkms lint --json
+stdout '"findings"'
+
+-- note.md --
+# A captured note
+
+Some text worth filing later.

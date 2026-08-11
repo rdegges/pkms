@@ -1495,7 +1495,8 @@ write tools** in this phase — `ingest`/filing stay off MCP; an
 The exit criterion ("'process my inbox' works on a fresh vault with no
 hand-written prompts") is behavioral. It is verified in three layers:
 
-1. **CI substrate** (`e2e/testdata/26-agent-substrate.txtar`): drives the
+1. **CI substrate** (`e2e/testdata/28-agent-substrate.txtar`; numbers 26/27
+   were taken by earlier phase-3 PRs): drives the
    binary through the §32.4a canonical sequence against a seeded fixture
    vault — proving every command the skill names actually works, including
    the empty-inbox case. Tied to the skill's canonical block.
