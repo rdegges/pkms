@@ -443,7 +443,7 @@ scratchpad `deps-report.md`, folded into implementation).
 | github.com/zalando/go-keyring | v0.2.8 | secrets (phase 2; pinned now) |
 | github.com/spf13/cobra | v1.10.2 | CLI |
 | github.com/stretchr/testify | v1.11.1 | tests only |
-| Go toolchain | 1.26.5 | Docker `golang:1.26.5-trixie`; CI `1.26.5` |
+| Go toolchain | 1.26.6 | Docker `golang:1.26.6-trixie`; CI `1.26.6` |
 
 Decisions (with rationale):
 

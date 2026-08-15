@@ -2,7 +2,7 @@ module github.com/rdegges/pkms
 
 go 1.26.0
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 require (
 	codeberg.org/readeck/go-readability/v2 v2.1.2

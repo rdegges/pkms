@@ -1,5 +1,5 @@
 # All Go commands run inside Docker so the host stays clean.
-GO_IMAGE   := golang:1.26.5-trixie
+GO_IMAGE   := golang:1.26.6-trixie
 DOCKER_RUN := docker run --rm \
 	-v $(CURDIR):/src -w /src \
 	-v pkms-gomod:/go/pkg/mod \
