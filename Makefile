@@ -6,10 +6,14 @@ DOCKER_RUN := docker run --rm \
 	-v pkms-gobuild:/root/.cache/go-build \
 	$(GO_IMAGE)
 
-.PHONY: test e2e vet lint build build-host tidy fmt
+.PHONY: test test-race e2e vet lint build build-host tidy fmt
 
 test:
 	$(DOCKER_RUN) go test ./...
+
+# What CI's test step runs (the race detector needs cgo, so no CGO_ENABLED=0).
+test-race:
+	$(DOCKER_RUN) go test -race ./...
 
 # New-user-experience walkthrough as executable scripts (e2e/testdata/).
 e2e:

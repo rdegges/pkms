@@ -495,6 +495,23 @@ All parametrized by the profile's `[[indexes]]` and count-field declarations.
 
 ---
 
+## Group F — Raw text well-formedness (1 rule, added by SPEC §33)
+
+### note-valid-text
+- Severity: error. Scope: every note, both profiles (profile-agnostic); runs
+  on the raw bytes, frontmatter included, and on over-cap (`TooLarge`) notes.
+- Check: the file is valid UTF-8 and contains no C0 control bytes other than
+  tab, LF, and CRLF pairs, and no DEL (0x7F). A bare CR fails. C1 controls
+  are legal (out of scope — no false positives on odd-but-legal Unicode).
+- Pass: any UTF-8 note, including CRLF line endings, tabs, emoji, CJK.
+- Fail: a NUL byte, an ANSI escape (0x1B), a lone CR, latin-1 bytes (`caf\xe9`).
+- Findings: at most two per note (one per defect kind), each with the count
+  and first offending line — a binary file misnamed `.md` cannot flood the
+  report.
+- Fixable: no (stripping bytes is destructive; repair is the owner's call).
+
+---
+
 ## Per-type frontmatter field tables (JSON Schema source of truth)
 
 `req` = required; `opt` = type-checked when present. All schemas set

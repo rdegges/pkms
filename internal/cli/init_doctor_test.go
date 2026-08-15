@@ -314,6 +314,42 @@ func TestDoctorAssetRefsInfoStatusInJSON(t *testing.T) {
 	require.GreaterOrEqual(t, report.Summary["info"], 1, "info summary count must include the external path")
 }
 
+// A note with control bytes must FAIL doctor, not warn (§33): a vault that
+// reports healthy must be safe for machine reads and edits.
+func TestDoctorNoteTextFailsOnControlBytes(t *testing.T) {
+	testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+
+	note := "---\ntitle: Corrupt\n---\n\nbefore\x00after\n"
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "corrupt.md"), []byte(note), 0o644))
+
+	out, err := runCLI(t, "doctor")
+	require.Error(t, err, "a control byte in a note must fail doctor: %s", out)
+	require.Contains(t, out, "note-text")
+	require.Contains(t, out, "_Inbox/corrupt.md")
+
+	// Repairing the note turns the check green.
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "corrupt.md"), []byte("---\ntitle: Clean\n---\n\nbefore after\n"), 0o644))
+	out, err = runCLI(t, "doctor")
+	require.NoError(t, err, out)
+	require.Contains(t, out, "every note is valid text")
+}
+
+func TestDoctorNoteTextFailsOnInvalidUTF8(t *testing.T) {
+	testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "latin1.md"), []byte("caf\xe9\n"), 0o644))
+
+	out, err := runCLI(t, "doctor")
+	require.Error(t, err, "invalid UTF-8 in a note must fail doctor: %s", out)
+	require.Contains(t, out, "note-text")
+}
+
 func TestProfileListAndEject(t *testing.T) {
 	testEnv(t)
 	out, err := runCLI(t, "profile", "list")

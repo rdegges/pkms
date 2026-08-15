@@ -1517,3 +1517,37 @@ The green sentence states its real strength: a **single fresh-session
 pass (N=1)**, recorded as such — an agent layer that passed once has not
 earned a stability promise, which is also why v0.4.0, not v1.0.0.
 
+
+## 33. Notes are valid text (doctor/lint) + `-race` in CI (post-v0.4.0)
+
+Closes a fail-open gate recorded at the v0.4.0 handoff: a note whose bytes
+are not valid text — NUL or other control bytes, invalid UTF-8 — passed
+both `doctor` and `lint` silently. That corruption is not cosmetic: Go's
+JSON encoder replaces invalid UTF-8 on output, so `query --json` silently
+rewrites what the vault actually contains, and control bytes garble diffs
+and terminal output (a bare CR can visually overwrite earlier text).
+
+**Definition of valid text** (one scanner, `vault.ScanText`, consumed by
+both surfaces): the note's raw bytes (frontmatter included) are valid
+UTF-8, and contain no C0 control bytes other than tab, LF, and CR
+immediately followed by LF, and no DEL (0x7F). A bare CR is forbidden (no
+modern editor writes lone-CR endings; mid-line CR is a display-spoofing
+vector). C1 controls are odd-but-legal Unicode and deliberately out of
+scope — the check must be free of false positives.
+
+- **Lint rule `note-valid-text`** (docs/LINT-RULES.md Group F): severity
+  error, never fixable (stripping bytes is destructive; repair is the
+  owner's call). At most two findings per note — one per defect kind,
+  each carrying the count and the first offending line — so a binary file
+  misnamed `.md` cannot flood the report. It runs on `TooLarge` notes
+  too: size must not buy an exemption.
+- **Doctor check `note-text`**: green sentence — *every note in the vault
+  is valid UTF-8 and free of forbidden control bytes*. A hit **fails**
+  doctor (§26 checks that find corruption must not soften to warnings); a
+  vault that cannot be scanned warns "could not scan" instead of
+  reporting green (§15 gates fail closed). Doctor and asset-refs (§31.9)
+  now share one vault scan.
+- **CI**: the unit-test step runs `go test -race ./...` (`make test-race`
+  is the local mirror; the race detector needs cgo, so it is exercised in
+  CI and via Docker locally, never asserted equivalent to the CGO-off
+  release build).
