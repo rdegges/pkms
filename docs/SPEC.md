@@ -1348,7 +1348,9 @@ uses a **non-empty user password** (owner-password-only PDFs open
 passwordless in some engines — an empty-user-password fixture would
 punish better behavior) and asserts the `errPDFEncrypted` hint. There is
 no hostile class: containment is owned by the existing suites
-(`panichunt`, the child lattice) — the eval measures readability only.
+(`pdf_containment_test.go`, `pdf_hardening_test.go`, and the child
+lattice; the tagged `panichunt` sweep is corpus discovery, never a CI
+gate) — the eval measures readability only.
 
 **Metric (binary, per document).** A document PASSES iff the extracted
 text — normalized by Unicode NFKC, lowercased, `-\n` hyphenation joined,
@@ -1359,30 +1361,32 @@ field is the classification of record for whether a document is
 text-bearing.
 
 **Bars.** A candidate meets the readability bar iff (a) 100% of the CI
-decodable fixtures pass, and (b) at least ceil(80%) of the text-bearing
-documents in the maintainer's real corpus
+decodable fixtures pass, and (b) at least ceil(0.8 × N) of the N
+text-bearing documents in the maintainer's real corpus
 (`.context/pdf-corpus/manifest.json`, local-only) pass. A real corpus
 that is absent or skipped makes a candidate **NOT ADOPTABLE** — adoption
 fails closed; only rejection can be decided without it.
 
-**Budgets (from the PR0 spike, measured 2026-08-14, linux/arm64 Docker).**
-Measured baseline: stripped darwin/arm64 release binary 17,893,074 B
-(17.06 MiB); incumbent extraction ~3.3 ms median. go-pdfium/webassembly
-v1.19.8 measured: +10,732,240 B (+10.23 MiB, +60%) binary delta;
-1.124 s median / 1.147 s max per extraction through the child path —
-the cost is the deterministic per-child wazero compile of the 5.0 MiB
-`pdfium.wasm`, not noise.
+**Budgets (from the PR0 spike, measured 2026-08-14).**
+Size baseline: stripped darwin/arm64 release binary 17,893,074 B
+(17.06 MiB); go-pdfium/webassembly v1.19.8 adds +10,732,240 B
+(+10.23 MiB, +60%). Latency, measured in linux/arm64 Docker
+(`golang:1.26.5-trixie`): incumbent ~3.3 ms median; go-pdfium 1.124 s
+median / 1.147 s max per extraction through the child path — the cost
+is the deterministic per-child wazero compile of the 5,225,611 B
+(4.98 MiB) `pdfium.wasm`, not noise.
 - Size: per-platform uncompressed binary delta ≤ **+12 MiB** vs the
-  17.06 MiB baseline. Ratified at the plan gate; it must NOT soften to
-  fit a candidate that measures higher.
+  17.06 MiB baseline. Ratified by the BDFL at the plan gate; it must
+  NOT soften to fit a candidate that measures higher.
 - Latency: on the pinned environment, per-document extraction (fresh
   child, compile included) median ≤ **2.5 s** and max ≤ **5 s** across
   the eval corpus — comfortably inside the §31.6 20 s kill deadline,
   honest about the ~340x regression vs the incumbent.
 
-**Pinned measurement environment.** `make pdf-eval` inside Docker
-`golang:1.26.5-trixie` on the maintainer's machine. Numbers measured
-elsewhere do not satisfy or violate the budgets.
+**Pinned measurement environment.** `make pdf-eval` inside the repo's
+pinned Go Docker image (the Makefile's `GO_IMAGE`;
+`golang:1.26.6-trixie` at freeze time) on the maintainer's machine.
+Numbers measured elsewhere do not satisfy or violate the budgets.
 
 **Invariants any swap preserves.** The full child containment lattice
 (argv sentinel + nonce, stdout/stderr → /dev/null, kill-on-deadline,
@@ -1396,9 +1400,10 @@ adoption `ledongthuc/pdf` leaves go.mod.
 
 **Decision rule.** ADOPTABLE = readability bars + budgets + invariant
 suites green + license diligence covering what a candidate *embeds*
-(`pdfium.wasm` redistributes PDFium object code, BSD-3 + Apache-2.0 —
-THIRD-PARTY notices required), + the §31.6 provenance/maintenance
-criterion. Sequencing: **go-pdfium/webassembly is evaluated first**;
+(`pdfium.wasm` redistributes PDFium object code; the exact license set
+must be resolved from the wasm build's own notices — upstream READMEs
+disagree — and THIRD-PARTY notices are required), + the §31.6
+provenance/maintenance criterion. Sequencing: **go-pdfium/webassembly is evaluated first**;
 `razvandimescu/gopdf` gets a spike only if go-pdfium fails a bar or
 budget — recorded BDFL posture: no supply-chain acknowledgment for a
 bus-factor-1 hostile-input parser while a healthy candidate passes. The
