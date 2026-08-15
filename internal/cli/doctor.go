@@ -108,14 +108,27 @@ func runDoctor(cmd *cobra.Command, jsonOut bool) error {
 			ok("vault-git", v.Name, "")
 		}
 
-		// asset-refs (SPEC §31.9): every vault-relative path stamped in an
-		// `assets:` frontmatter list must exist in the vault right now. The
-		// check reads ONLY `assets:` fields, so a note that never carried
-		// assets can't make it green-by-omission. External (CAS/reference)
-		// paths are machine-local and expected absent on other devices, so
-		// they are reported informationally and never color pass/fail.
+		// Content checks share one vault scan. A vault that cannot be
+		// scanned cannot be proven healthy, so both checks say so loudly
+		// instead of reporting green (§15 gates fail closed).
 		if profErr == nil {
-			assetRefsCheck(v.Name, v.Path, prof, ok, warn, info)
+			ix, ixErr := vault.BuildIndex(v.Path, vault.WalkOptions{AttachmentsDir: prof.Attachments})
+			if ixErr != nil {
+				warn("asset-refs", v.Name, "could not scan the vault: "+ixErr.Error())
+				warn("note-text", v.Name, "could not scan the vault: "+ixErr.Error())
+			} else {
+				// asset-refs (SPEC §31.9): every vault-relative path stamped
+				// in an `assets:` frontmatter list must exist in the vault
+				// right now. The check reads ONLY `assets:` fields, so a note
+				// that never carried assets can't make it green-by-omission.
+				// External (CAS/reference) paths are machine-local and
+				// expected absent on other devices, so they are reported
+				// informationally and never color pass/fail.
+				assetRefsCheck(v.Name, v.Path, ix, ok, warn, info)
+				// note-text (SPEC §33): every note is valid UTF-8 with no
+				// control bytes.
+				noteTextCheck(v.Name, v.Path, ix, ok, warn, fail)
+			}
 		}
 
 		// Quarantine counts, per source (SPEC §26).
@@ -203,12 +216,7 @@ func doctorReport(cmd *cobra.Command, checks []checkResult, jsonOut bool) error 
 // assetRefsCheck implements the §31.9 doctor check. The green sentence:
 // every vault-relative asset path stamped in an `assets:` frontmatter list
 // exists in the vault right now.
-func assetRefsCheck(vaultName, vaultPath string, prof *profile.Profile, ok, warn, info func(name, vault, detail string)) {
-	ix, err := vault.BuildIndex(vaultPath, vault.WalkOptions{AttachmentsDir: prof.Attachments})
-	if err != nil {
-		warn("asset-refs", vaultName, "could not scan the vault: "+err.Error())
-		return
-	}
+func assetRefsCheck(vaultName, vaultPath string, ix *vault.Index, ok, warn, info func(name, vault, detail string)) {
 	var inVaultMissing, externalMissing int
 	var firstInVault string
 	// checkPath stats one ledger entry, splitting in-vault vs external.
@@ -258,6 +266,56 @@ func assetRefsCheck(vaultName, vaultPath string, prof *profile.Profile, ok, warn
 	// device is EXPECTED, so it is info, never a warning.
 	if externalMissing > 0 {
 		info("asset-refs", vaultName, fmt.Sprintf("%d external asset path(s) not present on this machine (expected on other synced devices)", externalMissing))
+	}
+}
+
+// noteTextCheck implements the §33 doctor check. The green sentence: every
+// note in the vault is valid UTF-8 and free of control bytes. A hit FAILS
+// doctor (not a warning): corrupt bytes silently break `query --json`
+// (Go's encoder replaces invalid UTF-8) and git diffs, so a vault that
+// reports healthy must be safe for machine reads and edits. Over-cap
+// (TooLarge) notes are stream-scanned from disk — size must not buy an
+// exemption; a note that cannot be read cannot be proven valid, so it
+// warns instead of counting toward green.
+func noteTextCheck(vaultName, vaultPath string, ix *vault.Index, ok, warn, fail func(name, vault, detail string)) {
+	var bad, unreadable int
+	first := ""
+	for _, rel := range ix.NotePaths() {
+		n := ix.Notes[rel]
+		var rep vault.TextReport
+		if n.TooLarge {
+			var err error
+			rep, err = vault.ScanTextFile(filepath.Join(vaultPath, filepath.FromSlash(rel)))
+			if err != nil {
+				unreadable++
+				continue
+			}
+		} else {
+			rep = vault.ScanText(n.Src)
+		}
+		if !rep.OK() {
+			bad++
+			if first == "" {
+				first = rel
+			}
+		}
+	}
+	// %q: the offending path is untrusted bytes headed for a terminal —
+	// a filename can carry the very control bytes this check exists to
+	// catch, so it is always printed escaped. One entry per report: a
+	// consumer keying checks by name must never see note-text twice, so
+	// the unreadable count folds into the fail detail when both occur.
+	switch {
+	case bad > 0:
+		detail := fmt.Sprintf("%d note(s) contain invalid UTF-8 or control bytes (e.g. %q); `pkms lint --rules note-valid-text` lists them", bad, first)
+		if unreadable > 0 {
+			detail += fmt.Sprintf("; %d over-cap note(s) could not be read for the text check", unreadable)
+		}
+		fail("note-text", vaultName, detail)
+	case unreadable > 0:
+		warn("note-text", vaultName, fmt.Sprintf("%d over-cap note(s) could not be read for the text check", unreadable))
+	default:
+		ok("note-text", vaultName, "every note is valid text")
 	}
 }
 

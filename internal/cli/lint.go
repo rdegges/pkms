@@ -139,7 +139,9 @@ func printFindings(out interface{ Write([]byte) (int, error) }, findings []lint.
 	counts := map[lint.Severity]int{}
 	for _, f := range findings {
 		if f.Path != lastPath {
-			fmt.Fprintf(out, "\n%s\n", f.Path)
+			// %q: paths are untrusted bytes headed for a terminal — a
+			// filename can carry control bytes (doctor's escape policy).
+			fmt.Fprintf(out, "\n%q\n", f.Path)
 			lastPath = f.Path
 		}
 		loc := "     "

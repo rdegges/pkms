@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rdegges/pkms/internal/config"
+	"github.com/rdegges/pkms/internal/vault"
 )
 
 // testEnv isolates config + state in temp dirs.
@@ -312,6 +313,142 @@ func TestDoctorAssetRefsInfoStatusInJSON(t *testing.T) {
 	}
 	require.True(t, found, "expected an asset-refs check with status \"info\": %s", out)
 	require.GreaterOrEqual(t, report.Summary["info"], 1, "info summary count must include the external path")
+}
+
+// A note with control bytes must FAIL doctor, not warn (§33): a vault that
+// reports healthy must be safe for machine reads and edits.
+func TestDoctorNoteTextFailsOnControlBytes(t *testing.T) {
+	testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+
+	note := "---\ntitle: Corrupt\n---\n\nbefore\x00after\n"
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "corrupt.md"), []byte(note), 0o644))
+
+	out, err := runCLI(t, "doctor")
+	require.Error(t, err, "a control byte in a note must fail doctor: %s", out)
+	// "note-text" alone also appears on the green line, so assert the
+	// failure marker and detail, not just the check name.
+	require.Contains(t, out, "✗ vault: note-text")
+	require.Contains(t, out, "1 note(s) contain invalid UTF-8 or control bytes")
+	require.Contains(t, out, "_Inbox/corrupt.md")
+
+	// Repairing the note turns the check green.
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "corrupt.md"), []byte("---\ntitle: Clean\n---\n\nbefore after\n"), 0o644))
+	out, err = runCLI(t, "doctor")
+	require.NoError(t, err, out)
+	require.Contains(t, out, "every note is valid text")
+}
+
+func TestDoctorNoteTextFailsOnInvalidUTF8(t *testing.T) {
+	testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "latin1.md"), []byte("caf\xe9\n"), 0o644))
+
+	out, err := runCLI(t, "doctor")
+	require.Error(t, err, "invalid UTF-8 in a note must fail doctor: %s", out)
+	require.Contains(t, out, "✗ vault: note-text", "the check itself must be the failing one")
+	require.Contains(t, out, "_Inbox/latin1.md")
+}
+
+// Size must not buy an exemption: an over-cap note is indexed without its
+// bytes (SPEC §14), so doctor has to stream-scan it from disk (§33).
+func TestDoctorNoteTextScansOverCapNotes(t *testing.T) {
+	testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+
+	huge := append(bytes.Repeat([]byte("a"), vault.MaxBodyParseSize), "\x00\n"...)
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", "huge.md"), huge, 0o644))
+
+	out, err := runCLI(t, "doctor")
+	require.Error(t, err, "a NUL in an over-cap note must fail doctor: %s", out)
+	require.Contains(t, out, "✗ vault: note-text")
+	require.Contains(t, out, "_Inbox/huge.md")
+}
+
+// The offending path is untrusted bytes headed for a terminal: a filename
+// can carry the very control bytes the check exists to catch, so doctor
+// prints it escaped and never raw.
+func TestDoctorNoteTextEscapesControlBytesInPath(t *testing.T) {
+	testEnv(t)
+	vaultPath := filepath.Join(t.TempDir(), "vault")
+	_, err := runCLI(t, "init", "--path", vaultPath)
+	require.NoError(t, err)
+
+	// ESC in the name, NUL in the body: the name alone is not what fails.
+	name := "we\x1b[31mird.md"
+	require.NoError(t, os.WriteFile(filepath.Join(vaultPath, "_Inbox", name), []byte("body\x00\n"), 0o644))
+
+	out, err := runCLI(t, "doctor")
+	require.Error(t, err, out)
+	require.NotContains(t, out, "\x1b", "the raw escape byte must never reach the terminal")
+	require.Contains(t, out, `\x1b`, "the path is printed %q-escaped: %s", out)
+
+	// --json carries the same failure, machine-readably.
+	out, err = runCLI(t, "doctor", "--json")
+	require.Error(t, err, out)
+	var report struct {
+		Checks []struct {
+			Name   string `json:"name"`
+			Status string `json:"status"`
+			Detail string `json:"detail"`
+		} `json:"checks"`
+		Summary map[string]int `json:"summary"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	var failures int
+	for _, c := range report.Checks {
+		if c.Name == "note-text" {
+			require.Equal(t, "fail", c.Status, "detail: %s", c.Detail)
+			failures++
+		}
+	}
+	require.Equal(t, 1, failures, "exactly one note-text check per vault: %s", out)
+	require.GreaterOrEqual(t, report.Summary["fail"], 1)
+}
+
+// An over-cap note that cannot be read cannot be proven valid. It must not
+// count toward green, and it must not hide a real corruption failure.
+func TestNoteTextCheckUnreadableNoteFailsClosed(t *testing.T) {
+	dir := t.TempDir() // nothing on disk: every TooLarge note is unreadable
+	collect := func(status string, into *[]string) func(name, vaultName, detail string) {
+		return func(name, vaultName, detail string) { *into = append(*into, status+": "+detail) }
+	}
+	scan := func(notes map[string]*vault.Note) (oks, warns, fails []string) {
+		ix := &vault.Index{Root: dir, Notes: notes}
+		noteTextCheck("v", dir, ix,
+			collect("ok", &oks), collect("warn", &warns), collect("fail", &fails))
+		return
+	}
+
+	// Unreadable only: warn, never ok.
+	oks, warns, fails := scan(map[string]*vault.Note{
+		"missing.md": {RelPath: "missing.md", TooLarge: true},
+		"clean.md":   {RelPath: "clean.md", Src: []byte("fine\n")},
+	})
+	require.Empty(t, oks, "an unreadable note must not report green")
+	require.Empty(t, fails)
+	require.Len(t, warns, 1)
+	require.Contains(t, warns[0], "1 over-cap note(s) could not be read")
+
+	// Unreadable AND corrupt: both facts land in ONE check entry — a
+	// consumer keying by name must never see note-text twice — so the
+	// unreadable count folds into the fail detail.
+	oks, warns, fails = scan(map[string]*vault.Note{
+		"missing.md": {RelPath: "missing.md", TooLarge: true},
+		"corrupt.md": {RelPath: "corrupt.md", Src: []byte("bad\x00\n")},
+	})
+	require.Empty(t, oks)
+	require.Len(t, fails, 1)
+	require.Contains(t, fails[0], `"corrupt.md"`)
+	require.Contains(t, fails[0], "could not be read", "the unreadable note must still be reported")
+	require.Empty(t, warns, "no second note-text entry when the check already failed")
 }
 
 func TestProfileListAndEject(t *testing.T) {

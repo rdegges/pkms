@@ -443,7 +443,7 @@ scratchpad `deps-report.md`, folded into implementation).
 | github.com/zalando/go-keyring | v0.2.8 | secrets (phase 2; pinned now) |
 | github.com/spf13/cobra | v1.10.2 | CLI |
 | github.com/stretchr/testify | v1.11.1 | tests only |
-| Go toolchain | 1.26.5 | Docker `golang:1.26.5-trixie`; CI `1.26.5` |
+| Go toolchain | 1.26.6 | Docker `golang:1.26.6-trixie`; CI `1.26.6` |
 
 Decisions (with rationale):
 
@@ -1517,3 +1517,48 @@ The green sentence states its real strength: a **single fresh-session
 pass (N=1)**, recorded as such — an agent layer that passed once has not
 earned a stability promise, which is also why v0.4.0, not v1.0.0.
 
+
+## 33. Notes are valid text (doctor/lint) + `-race` in CI (post-v0.4.0)
+
+Closes a fail-open gate recorded at the v0.4.0 handoff: a note whose bytes
+are not valid text — NUL or other control bytes, invalid UTF-8 — passed
+both `doctor` and `lint` silently. That corruption is not cosmetic: Go's
+JSON encoder replaces invalid UTF-8 on output, so `query --json` silently
+rewrites what the vault actually contains, and control bytes garble diffs
+and terminal output (a bare CR can visually overwrite earlier text).
+
+**Definition of valid text** (one scanner, `vault.ScanText`, consumed by
+both surfaces): the note's raw bytes (frontmatter included) are valid
+UTF-8, and contain no C0 control bytes other than tab, LF, and CR
+immediately followed by LF, and no DEL (0x7F). A bare CR is forbidden (no
+modern editor writes lone-CR endings; mid-line CR is a display-spoofing
+vector). C1 controls are odd-but-legal Unicode and deliberately out of
+scope — the check must be free of false positives.
+
+- **Lint rule `note-valid-text`** (docs/LINT-RULES.md Group F): severity
+  error, never fixable (stripping bytes is destructive; repair is the
+  owner's call). At most two findings per note — one per defect kind,
+  each carrying the count and the first offending line — so a binary file
+  misnamed `.md` cannot flood the report. Over-cap (`TooLarge`, §14)
+  notes are indexed **without their bytes**, so the rule stream-scans
+  them from disk (`vault.ScanTextFile`, fixed-size chunks, never loading
+  the file whole) — size must not buy an exemption. An over-cap note
+  that cannot be read cannot be proven valid: the rule fails closed with
+  an error finding, never a silent pass.
+- **Doctor check `note-text`**: green sentence — *every note in the vault
+  is valid UTF-8 and free of forbidden control bytes*. A hit **fails**
+  doctor (§26 checks that find corruption must not soften to warnings),
+  and the offending path is printed `%q`-escaped — a filename can carry
+  the very control bytes the check exists to catch. Over-cap notes
+  stream-scan as in lint; one that cannot be read folds into the fail
+  detail when corruption was also found (one `note-text` entry per
+  report, never two) and warns on its own otherwise. A vault that cannot
+  be scanned at all warns "could not scan" instead of reporting green
+  (§15 gates fail closed). Doctor and asset-refs (§31.9) now share one
+  vault scan. The green sentence covers exactly the files the index
+  treats as notes — case-sensitive `.md` per §14 — so a corrupt
+  `Note.MD` is outside the claim.
+- **CI**: the unit-test step runs `go test -race ./...` (`make test-race`
+  is the local mirror; the race detector needs cgo, so it is exercised in
+  CI and via Docker locally, never asserted equivalent to the CGO-off
+  release build).
