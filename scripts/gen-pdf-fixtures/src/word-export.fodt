@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+    xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+    office:version="1.3"
+    office:mimetype="application/vnd.oasis.opendocument.text">
+  <office:body>
+    <office:text>
+      <text:p>PKMS Word Export Fixture</text:p>
+      <text:p>The vault keeps every note as a plain text file on disk. Nothing hides in a database and nothing needs an app to read it back.</text:p>
+      <text:p>Ingest runs once per day and never edits an old entry. Each run adds new notes and leaves the rest of the vault alone.</text:p>
+      <text:p>A good tool does one small job well and then gets out of the way. This document exists to test text extraction from a word processor export.</text:p>
+    </office:text>
+  </office:body>
+</office:document>

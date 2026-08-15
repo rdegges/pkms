@@ -37,7 +37,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
-          args: --build-tags e2e
+          args: --build-tags e2e,pdfeval
 
   # Cross-compile + package exactly like a release would, minus publishing —
   # a broken .goreleaser.yaml fails here, not on tag day.

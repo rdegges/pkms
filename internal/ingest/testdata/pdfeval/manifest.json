@@ -1,0 +1,62 @@
+{
+  "comment": "SPEC §31.12 eval fixtures. Generated once by the scripts in scripts/gen-pdf-fixtures/ (pinned Docker images; provenance recorded per fixture). expect classifies the document of record: text = all 3 phrases must be found after NFKC + lowercase + -\\n join + whitespace collapse; no-text = the honest empty outcome; encrypted = the errPDFEncrypted hint. The encrypted password is fixture data, not a secret.",
+  "fixtures": [
+    {
+      "file": "word-export.pdf",
+      "class": "word-export",
+      "expect": "text",
+      "producer": "LibreOffice 25.8.7.3 580(Build:3) (Docker image lscr.io/linuxserver/libreoffice:25.8.7.3-r0-ls205)",
+      "command": "scripts/gen-pdf-fixtures/gen-word-export.sh: libreoffice --headless --convert-to pdf --outdir /out /in/word-export.fodt",
+      "phrases": [
+        "every note as a plain text file",
+        "runs once per day and never edits",
+        "does one small job well"
+      ]
+    },
+    {
+      "file": "chrome-print.pdf",
+      "class": "chrome-print",
+      "expect": "text",
+      "producer": "Chromium 124.0.6367.78 Alpine Linux (Docker image zenika/alpine-chrome:124)",
+      "command": "scripts/gen-pdf-fixtures/gen-chrome-print.sh: chromium-browser --headless --no-sandbox --no-zygote --disable-gpu --print-to-pdf=/out/chrome-print.pdf file:///in/chrome-print.html",
+      "phrases": [
+        "turns web pages into fixed layout documents",
+        "the same font metrics on every run",
+        "test text extraction from browser output"
+      ]
+    },
+    {
+      "file": "latex-paper.pdf",
+      "class": "latex-paper",
+      "expect": "text",
+      "producer": "Tectonic 0.15.0 (Docker image dxjoke/tectonic-docker:0.15.0-alpine-biber, run with --platform linux/amd64)",
+      "command": "scripts/gen-pdf-fixtures/gen-latex-paper.sh: tectonic -o /out /in/latex-paper.tex",
+      "phrases": [
+        "efficient parser reads the whole file",
+        "each document either passes or fails",
+        "footnotes, sections, and math to stress"
+      ]
+    },
+    {
+      "file": "scan-image-only.pdf",
+      "class": "scan-image-only",
+      "expect": "no-text",
+      "producer": "ImageMagick 7.1.1-47 Q16-HDRI aarch64 (Docker image dpokidov/imagemagick:7.1.1-47)",
+      "command": "scripts/gen-pdf-fixtures/gen-scan-image-only.sh: convert -size 612x792 gradient:white-lightgray -fill gray -draw 'rectangle 72,72 540,120' -draw 'rectangle 72,150 540,700' /out/scan-image-only.pdf",
+      "phrases": []
+    },
+    {
+      "file": "encrypted.pdf",
+      "class": "encrypted",
+      "expect": "encrypted",
+      "producer": "qpdf 12.2.0 (Debian trixie qpdf package inside Docker image debian:trixie-slim; no maintained standalone qpdf image exists)",
+      "command": "scripts/gen-pdf-fixtures/gen-encrypted.sh: qpdf --encrypt pkms-user-pw pkms-owner-pw 128 --use-aes=y -- /out/word-export.pdf /out/encrypted.pdf (128-bit AES V=4/R=4, not 256-bit: the incumbent rejects V=5/R=6 as unsupported instead of returning ErrInvalidPassword, which would dodge the errPDFEncrypted hint path this class asserts)",
+      "password": "pkms-user-pw",
+      "phrases": [
+        "every note as a plain text file",
+        "runs once per day and never edits",
+        "does one small job well"
+      ]
+    }
+  ]
+}

@@ -6,7 +6,7 @@ DOCKER_RUN := docker run --rm \
 	-v pkms-gobuild:/root/.cache/go-build \
 	$(GO_IMAGE)
 
-.PHONY: test test-race e2e vet lint build build-host tidy fmt
+.PHONY: test test-race e2e pdf-eval vet lint build build-host tidy fmt
 
 test:
 	$(DOCKER_RUN) go test ./...
@@ -19,6 +19,12 @@ test-race:
 e2e:
 	$(DOCKER_RUN) go test -tags=e2e ./e2e/...
 
+# §31.12 PDF readability scorecard — a measurement tool, not a CI gate.
+# This is the pinned measurement environment: numbers measured elsewhere
+# do not satisfy or violate the §31.12 budgets.
+pdf-eval:
+	$(DOCKER_RUN) go test -tags=pdfeval -run 'TestPDFEval$$' -v ./internal/ingest/
+
 vet:
 	$(DOCKER_RUN) go vet ./...
 
@@ -30,7 +36,7 @@ lint: vet
 	$(DOCKER_RUN) sh -c 'test -z "$$(gofmt -l ./cmd ./internal)" || (gofmt -l ./cmd ./internal && exit 1)'
 	docker run --rm -v $(CURDIR):/src -w /src \
 		-v pkms-gomod:/go/pkg/mod -v pkms-gobuild:/root/.cache/go-build \
-		$(GOLANGCI_IMAGE) golangci-lint run --build-tags e2e
+		$(GOLANGCI_IMAGE) golangci-lint run --build-tags e2e,pdfeval
 
 # Linux binary (native to the container).
 build:
