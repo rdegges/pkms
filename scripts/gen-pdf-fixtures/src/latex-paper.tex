@@ -1,0 +1,22 @@
+% Small LaTeX paper fixture for the §31.12 PDF readability eval.
+% Hyphenation is disabled so the ground-truth phrases never split
+% across lines with a hyphen (§31.12 authoring rule).
+\documentclass{article}
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+\begin{document}
+
+\section*{PKMS LaTeX Paper Fixture}
+
+An efficient parser reads the whole file in a single pass and keeps
+its working set small. The word efficient also carries the ffi
+ligature, which stresses text extraction on purpose.
+
+The metric is binary---each document either passes or fails, and the
+em dash in this sentence is typeset as a real em dash character.
+
+Real papers use footnotes, sections, and math to stress the
+extractor, so this fixture keeps at least one of each nearby:
+$e^{i\pi} + 1 = 0$.
+
+\end{document}
