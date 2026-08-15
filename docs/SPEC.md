@@ -1331,6 +1331,89 @@ set it; a wrong value cannot escape the policy's placement rules because
 in-vault and CAS placement ignore it. Judged and accepted at the PR2 BDFL
 gate as an additive change to the frozen contract.
 
+### 31.12 Amendment: PDF extraction readability bar (frozen before fixtures, 2026-08-14)
+
+§31.6 shipped with an honest limitation: `ledongthuc/pdf` cannot decode
+Identity-H/CID subset fonts — the default output of Word and Chrome — so
+roughly 2 of 11 real PDFs yield usable text. This amendment freezes what
+"good enough extraction" means so a replacement library is adopted or
+rejected by measurement, never by demo. The criteria here are frozen
+BEFORE any eval fixture or candidate wiring exists; fixtures are then
+built to the criteria, not the reverse.
+
+**Corpus classes.** Five: `word-export`, `chrome-print`, `latex-paper`,
+`scan-image-only`, `encrypted`. The scan class asserts the honest
+"no extractable text" outcome (OCR is a non-goal); the encrypted class
+uses a **non-empty user password** (owner-password-only PDFs open
+passwordless in some engines — an empty-user-password fixture would
+punish better behavior) and asserts the `errPDFEncrypted` hint. There is
+no hostile class: containment is owned by the existing suites
+(`panichunt`, the child lattice) — the eval measures readability only.
+
+**Metric (binary, per document).** A document PASSES iff the extracted
+text — normalized by Unicode NFKC, lowercased, `-\n` hyphenation joined,
+then whitespace runs collapsed to single spaces — contains ALL 3 of its
+ground-truth phrases. Phrases are ≥4 words each and authored to avoid
+words likely to hyphenate across lines. The corpus manifest's `expect`
+field is the classification of record for whether a document is
+text-bearing.
+
+**Bars.** A candidate meets the readability bar iff (a) 100% of the CI
+decodable fixtures pass, and (b) at least ceil(80%) of the text-bearing
+documents in the maintainer's real corpus
+(`.context/pdf-corpus/manifest.json`, local-only) pass. A real corpus
+that is absent or skipped makes a candidate **NOT ADOPTABLE** — adoption
+fails closed; only rejection can be decided without it.
+
+**Budgets (from the PR0 spike, measured 2026-08-14, linux/arm64 Docker).**
+Measured baseline: stripped darwin/arm64 release binary 17,893,074 B
+(17.06 MiB); incumbent extraction ~3.3 ms median. go-pdfium/webassembly
+v1.19.8 measured: +10,732,240 B (+10.23 MiB, +60%) binary delta;
+1.124 s median / 1.147 s max per extraction through the child path —
+the cost is the deterministic per-child wazero compile of the 5.0 MiB
+`pdfium.wasm`, not noise.
+- Size: per-platform uncompressed binary delta ≤ **+12 MiB** vs the
+  17.06 MiB baseline. Ratified at the plan gate; it must NOT soften to
+  fit a candidate that measures higher.
+- Latency: on the pinned environment, per-document extraction (fresh
+  child, compile included) median ≤ **2.5 s** and max ≤ **5 s** across
+  the eval corpus — comfortably inside the §31.6 20 s kill deadline,
+  honest about the ~340x regression vs the incumbent.
+
+**Pinned measurement environment.** `make pdf-eval` inside Docker
+`golang:1.26.5-trixie` on the maintainer's machine. Numbers measured
+elsewhere do not satisfy or violate the budgets.
+
+**Invariants any swap preserves.** The full child containment lattice
+(argv sentinel + nonce, stdout/stderr → /dev/null, kill-on-deadline,
+2 MiB text cap); the `pdfUndecodable` per-page screen; body
+neutralization (control-byte strip, `[` escaping); encrypted →
+`errPDFEncrypted`; extraction failure → asset note with bounded hint.
+Two test gates import `ledongthuc/pdf` directly (`panic_hunt_test.go`,
+`pdf_test.go`) and would go silently green after a swap: both are
+retargeted at the candidate (or deleted where meaningless), and on
+adoption `ledongthuc/pdf` leaves go.mod.
+
+**Decision rule.** ADOPTABLE = readability bars + budgets + invariant
+suites green + license diligence covering what a candidate *embeds*
+(`pdfium.wasm` redistributes PDFium object code, BSD-3 + Apache-2.0 —
+THIRD-PARTY notices required), + the §31.6 provenance/maintenance
+criterion. Sequencing: **go-pdfium/webassembly is evaluated first**;
+`razvandimescu/gopdf` gets a spike only if go-pdfium fails a bar or
+budget — recorded BDFL posture: no supply-chain acknowledgment for a
+bus-factor-1 hostile-input parser while a healthy candidate passes. The
+pick among adoptable candidates is a one-sentence BDFL ruling at the
+decision PR. If none is adoptable, `ledongthuc/pdf` stays and the
+measured numbers are recorded — rejection with numbers is a valid
+outcome, not a failure of the process.
+
+**Adoption mechanics.** Adoption is a NEW numbered superseding amendment
+(the §31.6 Identity-H honest-empty contract flips to must-extract —
+frozen docs get amendments, never silent drift). The committed fixtures'
+readability assertions are promoted to untagged blocking CI (accounting
+for the per-run wasm compile cost), keeping the never-garbage assertions
+either way.
+
 ## 32. Phase 3 — agent layer (frozen 2026-08-10)
 
 The final planned phase ships the taste-dependent half of pkms — the part
