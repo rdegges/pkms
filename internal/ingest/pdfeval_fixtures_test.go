@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/text/unicode/norm"
 )
 
 // The committed §31.12 eval fixtures (testdata/pdfeval/, provenance in
@@ -38,6 +39,37 @@ type pdfEvalManifest struct {
 	Fixtures []pdfEvalManifestFile `json:"fixtures"`
 }
 
+// normalizePDFEvalText applies the frozen §31.12 normalization, in its
+// order: Unicode NFKC (folds the ligatures LaTeX loves, e.g. ﬃ → ffi),
+// lowercase, join "-\n" line-break hyphenation, collapse whitespace runs
+// to single spaces. Phrases get the same treatment before containment.
+// It lives here, untagged, because it IS the frozen metric: the tagged
+// scorecard is never compiled or run by CI, so the metric's own unit
+// tests (pdfeval_metric_test.go) have to run under `go test ./...`.
+func normalizePDFEvalText(s string) string {
+	s = norm.NFKC.String(s)
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, "-\n", "")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// repoRoot walks up from the package directory to the go.mod, so tests
+// find repo-root paths (.context/pdf-corpus/, scripts/gen-pdf-fixtures/)
+// regardless of which directory the test binary runs from.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	require.NoError(t, err)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		require.NotEqual(t, dir, parent, "no go.mod above %s", dir)
+		dir = parent
+	}
+}
+
 func loadPDFEvalManifest(t *testing.T, path string) []pdfEvalManifestFile {
 	t.Helper()
 	raw, err := os.ReadFile(path)
@@ -45,6 +77,24 @@ func loadPDFEvalManifest(t *testing.T, path string) []pdfEvalManifestFile {
 	var m pdfEvalManifest
 	require.NoError(t, json.Unmarshal(raw, &m))
 	require.NotEmpty(t, m.Fixtures, "manifest %s lists no documents", path)
+	// §31.12 integrity rules apply to EVERY manifest — the committed
+	// fixtures and the maintainer's real corpus alike. A text entry
+	// without its 3 authored phrases is evidence-free: it must fail the
+	// run, never score PASS toward the ceil(0.8 x N) adoption bar
+	// (adoption fails closed).
+	for _, f := range m.Fixtures {
+		require.Contains(t, []string{"text", "no-text", "encrypted"}, f.Expect,
+			"%s: entry %s has unknown expect %q", path, f.File, f.Expect)
+		if f.Expect != "text" {
+			continue
+		}
+		require.Len(t, f.Phrases, 3,
+			"%s: text entry %s needs exactly 3 ground-truth phrases (§31.12)", path, f.File)
+		for _, phr := range f.Phrases {
+			require.GreaterOrEqual(t, len(strings.Fields(phr)), 4,
+				"%s: entry %s phrase %q must be ≥4 words (§31.12)", path, f.File, phr)
+		}
+	}
 	return m.Fixtures
 }
 
@@ -117,14 +167,17 @@ func TestPDFEvalFixturesCurrentContract(t *testing.T) {
 						"control byte %#x at offset %d — notes are text files (§31.6)", r, i)
 				}
 				require.NotContains(t, pdfBody(path), "\x00", "no NUL byte may reach a note body")
-				if f.Class == "word-export" || f.Class == "chrome-print" {
-					// Identity-H subset fonts: the incumbent cannot decode
-					// them, and "no extractable text" is the truthful answer
-					// (§31.6). The §31.12 adoption amendment flips this
-					// assertion to must-extract.
-					require.Empty(t, text,
-						"incumbent contract: Identity-H yields the honest empty outcome, never garbage")
-				}
+				// The incumbent decodes NONE of the three real-producer text
+				// fixtures — Identity-H subset fonts for word-export and
+				// chrome-print, and tectonic's subset encoding for
+				// latex-paper (measured: phrases 0/3 for all three). "No
+				// extractable text" is the truthful answer (§31.6). Pinned
+				// for every text class: latex-paper was previously
+				// unasserted, so its class could flip between text and empty
+				// — in either direction — with the suite still green. The
+				// §31.12 adoption amendment flips these to must-extract.
+				require.Empty(t, text,
+					"incumbent contract: %s yields the honest empty outcome, never garbage", f.Class)
 			default:
 				t.Fatalf("unknown expect %q", f.Expect)
 			}

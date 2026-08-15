@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"golang.org/x/text/unicode/norm"
 )
 
 // TestPDFEval is the §31.12 readability harness: a MEASUREMENT TOOL, not
@@ -186,30 +185,8 @@ func scoreRealCorpus(t *testing.T) {
 		pass, len(docs), textPass, textBearing, bar)
 }
 
-// normalizePDFEvalText applies the frozen §31.12 normalization, in its
-// order: Unicode NFKC (folds the ligatures LaTeX loves, e.g. ﬃ → ffi),
-// lowercase, join "-\n" line-break hyphenation, collapse whitespace runs
-// to single spaces. Phrases get the same treatment before containment.
-func normalizePDFEvalText(s string) string {
-	s = norm.NFKC.String(s)
-	s = strings.ToLower(s)
-	s = strings.ReplaceAll(s, "-\n", "")
-	return strings.Join(strings.Fields(s), " ")
-}
-
-// repoRoot walks up from the package directory to the go.mod, so the
-// harness finds .context/pdf-corpus/ regardless of which directory the
-// test binary runs from.
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	require.NoError(t, err)
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		require.NotEqual(t, dir, parent, "no go.mod above %s", dir)
-		dir = parent
-	}
-}
+// normalizePDFEvalText and repoRoot moved to the UNTAGGED
+// pdfeval_fixtures_test.go (tester pass): the frozen metric is the thing
+// a candidate swap is judged by, and nothing in CI compiles or runs this
+// tagged file, so its unit tests must live where `go test ./...` runs
+// them. Behavior is unchanged.
