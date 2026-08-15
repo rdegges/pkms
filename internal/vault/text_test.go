@@ -9,32 +9,55 @@ import (
 )
 
 // ScanTextFile must agree byte-for-byte with ScanText, including when a
-// CRLF pair or a multibyte rune straddles its 64KiB read-buffer boundary.
+// CRLF pair, a multibyte rune, or an invalid sequence straddles its 64KiB
+// read-buffer boundary. wantOK is asserted too: parity alone would also
+// hold if both scanners silently read nothing.
 func TestScanTextFileMatchesScanText(t *testing.T) {
-	boundary := strings.Repeat("a", (64<<10)-1) + "\r\n" // CR is byte 65535, LF is 65536
-	cases := map[string]string{
-		"clean":               "line\r\ncol\tumn 🎉\n",
-		"nul and invalid":     "line\r\nbad\x00byte \xff\n",
-		"crlf at buffer edge": boundary + "🎉\x00\n",
+	const bufSize = 64 << 10
+	cases := []struct {
+		name   string
+		src    string
+		wantOK bool
+	}{
+		{"clean", "line\r\ncol\tumn 🎉\n", true},
+		{"nul and invalid", "line\r\nbad\x00byte \xff\n", false},
+		// CR is the last byte of the first buffer fill; the LF that makes it
+		// legal only arrives after a refill.
+		{"crlf at buffer edge", strings.Repeat("a", bufSize-1) + "\r\n🎉\x00\n", false},
+		{"clean crlf at buffer edge", strings.Repeat("a", bufSize-1) + "\r\ntail\n", true},
+		// The 4-byte rune starts at bufSize-2, so two of its bytes land in
+		// the next fill. A boundary-blind reader would report it invalid.
+		{"multibyte rune straddles buffer edge", strings.Repeat("a", bufSize-2) + "🎉\n", true},
+		// Same, for a truncated sequence: both bytes must still be counted.
+		{"invalid sequence straddles buffer edge", strings.Repeat("a", bufSize-1) + "\xe6\x97\n", false},
 	}
 	dir := t.TempDir()
-	for name, src := range cases {
-		t.Run(name, func(t *testing.T) {
-			p := filepath.Join(dir, name+".md")
-			if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := filepath.Join(dir, tc.name+".md")
+			if err := os.WriteFile(p, []byte(tc.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			got, err := ScanTextFile(p)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if want := ScanText([]byte(src)); got != want {
+			if want := ScanText([]byte(tc.src)); got != want {
 				t.Errorf("ScanTextFile = %+v, ScanText = %+v", got, want)
+			}
+			if got.OK() != tc.wantOK {
+				t.Errorf("OK() = %v, want %v (%+v)", got.OK(), tc.wantOK, got)
 			}
 		})
 	}
 	if _, err := ScanTextFile(filepath.Join(dir, "missing.md")); err == nil {
 		t.Error("expected an error for a missing file, got nil")
+	}
+	// A read error mid-scan must surface as an error, never as a clean
+	// report: an unreadable note cannot be proven valid (SPEC §33). Opening
+	// a directory succeeds on Linux; the first read is what fails.
+	if rep, err := ScanTextFile(dir); err == nil {
+		t.Errorf("expected an error for a directory, got nil (%+v)", rep)
 	}
 }
 

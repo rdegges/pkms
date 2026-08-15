@@ -31,8 +31,10 @@ func (noteValidText) CheckNote(ctx *lint.Context, n *vault.Note) []lint.Finding 
 		var err error
 		rep, err = vault.ScanTextFile(filepath.Join(ctx.Ix.Root, filepath.FromSlash(n.RelPath)))
 		if err != nil {
+			// %q: the error embeds the filename (*fs.PathError), which can
+			// carry the very control bytes this rule catches.
 			return []lint.Finding{finding(lint.Error, n.RelPath, 0, false,
-				"could not read note for text validation: %v", err)}
+				"could not read note for text validation: %q", err.Error())}
 		}
 	} else {
 		rep = vault.ScanText(n.Src)

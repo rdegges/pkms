@@ -54,6 +54,19 @@ func TestLintExitCodesAndJSON(t *testing.T) {
 	require.Positive(t, payload.Summary["error"])
 }
 
+// Lint's text report prints untrusted paths escaped: a filename can carry
+// the very control bytes note-valid-text catches, and doctor routes users
+// to this surface (§33).
+func TestLintEscapesControlBytesInPaths(t *testing.T) {
+	setupLintVault(t, map[string]string{
+		"Resources/Personal/we\x1b[31mird.md": "body\x00\n",
+	})
+	out, err := runCLI(t, "lint", "--rules", "note-valid-text")
+	require.ErrorIs(t, err, errFindings, out)
+	require.NotContains(t, out, "\x1b", "the raw escape byte must never reach the terminal")
+	require.Contains(t, out, `\x1b`, "the path is printed %%q-escaped: %s", out)
+}
+
 func TestLintCleanExitsZero(t *testing.T) {
 	setupLintVault(t, map[string]string{
 		"Areas/Personal/note.md": "Just a note.\n",

@@ -500,6 +500,8 @@ All parametrized by the profile's `[[indexes]]` and count-field declarations.
 ### note-valid-text
 - Severity: error. Scope: every note, both profiles (profile-agnostic); runs
   on the raw bytes, frontmatter included, and on over-cap (`TooLarge`) notes.
+  "Every note" means exactly the files the index treats as notes —
+  case-sensitive `.md` — so a corrupt `Note.MD` is outside the claim.
 - Check: the file is valid UTF-8 and contains no C0 control bytes other than
   tab, LF, and CRLF pairs, and no DEL (0x7F). A bare CR fails. C1 controls
   are legal (out of scope — no false positives on odd-but-legal Unicode).

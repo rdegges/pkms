@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/rdegges/pkms/internal/lint"
+	"github.com/rdegges/pkms/internal/profile"
 	"github.com/rdegges/pkms/internal/vault"
 )
 
@@ -82,4 +83,84 @@ func TestNoteValidTextCleanVaultIsSilent(t *testing.T) {
 		"Resources/Personal/b.md": "crlf line\r\nwith\ttab\r\n",
 	}, "note-valid-text")
 	require.Empty(t, byRule(fs)["note-valid-text"])
+}
+
+// A rule that is registered but not enabled by a profile is a gate that
+// never fires. Both shipped profiles must run it with no `--rules` flag.
+func TestNoteValidTextRunsByDefaultOnBothProfiles(t *testing.T) {
+	for _, name := range []string{"para", "rdegges"} {
+		t.Run(name, func(t *testing.T) {
+			prof, err := profile.Load(name)
+			require.NoError(t, err)
+			root := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(root, "Resources"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "Resources", "corrupt.md"),
+				[]byte("---\ntitle: x\n---\n\nbefore\x00after\n"), 0o644))
+			ix, err := vault.BuildIndex(root, vault.WalkOptions{AttachmentsDir: prof.Attachments})
+			require.NoError(t, err)
+
+			// No `only` filter: exactly what `pkms lint` runs.
+			fs, err := lint.Run(ix, prof, nil, nil)
+			require.NoError(t, err)
+			got := byRule(fs)["note-valid-text"]
+			require.Len(t, got, 1, "the rule must be on by default under %s: %+v", name, fs)
+			require.Equal(t, lint.Error, got[0].Severity)
+		})
+	}
+}
+
+// False positives would make the check unusable: binaries live in the
+// attachments dir and beside notes, and only markdown notes are scanned.
+func TestNoteValidTextIgnoresNonNotes(t *testing.T) {
+	prof, err := profile.Load("rdegges")
+	require.NoError(t, err)
+	root := t.TempDir()
+	binary := "\x00\x01\x02\xff\xfe PNG-ish bytes\n"
+	files := map[string]string{
+		prof.Attachments + "/photo.png":     binary,
+		prof.Attachments + "/misnamed.md":   binary, // inside attachments: never note-parsed
+		"Resources/Personal/data.bin":       binary,
+		"Resources/Personal/.hidden.md":     binary, // dotfiles are not notes
+		"Resources/Personal/legit.md":       "---\ntitle: ok\n---\n\nfine\n",
+		"Resources/Personal/no-extension":   binary,
+		"Resources/Personal/trailing.md.md": "clean\n",
+	}
+	for rel, content := range files {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(content), 0o644))
+	}
+	ix, err := vault.BuildIndex(root, vault.WalkOptions{AttachmentsDir: prof.Attachments})
+	require.NoError(t, err)
+
+	fs, err := lint.Run(ix, prof, nil, []string{"note-valid-text"})
+	require.NoError(t, err)
+	require.Empty(t, byRule(fs)["note-valid-text"], "only markdown notes are scanned: %+v", fs)
+}
+
+// A binary file misnamed .md must produce at most two findings (one per
+// defect kind) with the real counts — never one finding per bad byte.
+func TestNoteValidTextCapsFindingsPerNote(t *testing.T) {
+	var b strings.Builder
+	for i := 0; i < 500; i++ {
+		b.WriteString("\x00\x1b\xff\xfe")
+	}
+	fs := run(t, map[string]string{"Resources/Personal/binary.md": b.String()}, "note-valid-text")
+
+	got := byRule(fs)["note-valid-text"]
+	require.Len(t, got, 2, "one finding per defect kind, not per byte: %d findings", len(got))
+	var utf8Msg, ctrlMsg string
+	for _, f := range got {
+		require.Equal(t, "Resources/Personal/binary.md", f.Path)
+		require.Equal(t, lint.Error, f.Severity)
+		require.False(t, f.Fixable, "stripping bytes is destructive; repair is the owner's call")
+		if strings.Contains(f.Message, "UTF-8") {
+			utf8Msg = f.Message
+		} else {
+			ctrlMsg = f.Message
+		}
+	}
+	require.Contains(t, utf8Msg, "1000 invalid byte(s)", "both \\xff and \\xfe are counted, 500 times each")
+	require.Contains(t, ctrlMsg, "1000 control byte(s)")
+	require.Contains(t, ctrlMsg, "0x00")
 }

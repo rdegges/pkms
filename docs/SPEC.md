@@ -1550,10 +1550,14 @@ scope — the check must be free of false positives.
   doctor (§26 checks that find corruption must not soften to warnings),
   and the offending path is printed `%q`-escaped — a filename can carry
   the very control bytes the check exists to catch. Over-cap notes
-  stream-scan as in lint; one that cannot be read warns ("could not be
-  read for the text check"). A vault that cannot be scanned at all warns
-  "could not scan" instead of reporting green (§15 gates fail closed).
-  Doctor and asset-refs (§31.9) now share one vault scan.
+  stream-scan as in lint; one that cannot be read folds into the fail
+  detail when corruption was also found (one `note-text` entry per
+  report, never two) and warns on its own otherwise. A vault that cannot
+  be scanned at all warns "could not scan" instead of reporting green
+  (§15 gates fail closed). Doctor and asset-refs (§31.9) now share one
+  vault scan. The green sentence covers exactly the files the index
+  treats as notes — case-sensitive `.md` per §14 — so a corrupt
+  `Note.MD` is outside the claim.
 - **CI**: the unit-test step runs `go test -race ./...` (`make test-race`
   is the local mirror; the race detector needs cgo, so it is exercised in
   CI and via Docker locally, never asserted equivalent to the CGO-off

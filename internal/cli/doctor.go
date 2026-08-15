@@ -302,17 +302,20 @@ func noteTextCheck(vaultName, vaultPath string, ix *vault.Index, ok, warn, fail 
 	}
 	// %q: the offending path is untrusted bytes headed for a terminal —
 	// a filename can carry the very control bytes this check exists to
-	// catch, so it is always printed escaped.
+	// catch, so it is always printed escaped. One entry per report: a
+	// consumer keying checks by name must never see note-text twice, so
+	// the unreadable count folds into the fail detail when both occur.
 	switch {
 	case bad > 0:
-		fail("note-text", vaultName, fmt.Sprintf("%d note(s) contain invalid UTF-8 or control bytes (e.g. %q); `pkms lint --rules note-valid-text` lists them", bad, first))
+		detail := fmt.Sprintf("%d note(s) contain invalid UTF-8 or control bytes (e.g. %q); `pkms lint --rules note-valid-text` lists them", bad, first)
+		if unreadable > 0 {
+			detail += fmt.Sprintf("; %d over-cap note(s) could not be read for the text check", unreadable)
+		}
+		fail("note-text", vaultName, detail)
 	case unreadable > 0:
 		warn("note-text", vaultName, fmt.Sprintf("%d over-cap note(s) could not be read for the text check", unreadable))
 	default:
 		ok("note-text", vaultName, "every note is valid text")
-	}
-	if bad > 0 && unreadable > 0 {
-		warn("note-text", vaultName, fmt.Sprintf("%d over-cap note(s) could not be read for the text check", unreadable))
 	}
 }
 
