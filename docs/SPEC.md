@@ -1539,14 +1539,21 @@ scope — the check must be free of false positives.
   error, never fixable (stripping bytes is destructive; repair is the
   owner's call). At most two findings per note — one per defect kind,
   each carrying the count and the first offending line — so a binary file
-  misnamed `.md` cannot flood the report. It runs on `TooLarge` notes
-  too: size must not buy an exemption.
+  misnamed `.md` cannot flood the report. Over-cap (`TooLarge`, §14)
+  notes are indexed **without their bytes**, so the rule stream-scans
+  them from disk (`vault.ScanTextFile`, fixed-size chunks, never loading
+  the file whole) — size must not buy an exemption. An over-cap note
+  that cannot be read cannot be proven valid: the rule fails closed with
+  an error finding, never a silent pass.
 - **Doctor check `note-text`**: green sentence — *every note in the vault
   is valid UTF-8 and free of forbidden control bytes*. A hit **fails**
-  doctor (§26 checks that find corruption must not soften to warnings); a
-  vault that cannot be scanned warns "could not scan" instead of
-  reporting green (§15 gates fail closed). Doctor and asset-refs (§31.9)
-  now share one vault scan.
+  doctor (§26 checks that find corruption must not soften to warnings),
+  and the offending path is printed `%q`-escaped — a filename can carry
+  the very control bytes the check exists to catch. Over-cap notes
+  stream-scan as in lint; one that cannot be read warns ("could not be
+  read for the text check"). A vault that cannot be scanned at all warns
+  "could not scan" instead of reporting green (§15 gates fail closed).
+  Doctor and asset-refs (§31.9) now share one vault scan.
 - **CI**: the unit-test step runs `go test -race ./...` (`make test-race`
   is the local mirror; the race detector needs cgo, so it is exercised in
   CI and via Docker locally, never asserted equivalent to the CGO-off

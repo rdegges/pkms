@@ -1,12 +1,41 @@
 package rules_test
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/rdegges/pkms/internal/lint"
+	"github.com/rdegges/pkms/internal/vault"
 )
+
+// Over-cap notes are indexed without their bytes (SPEC §14) — the rule must
+// stream-scan them from disk, or a 10MiB+1 corrupt file passes blind (§33).
+func TestNoteValidTextScansOversizedNotes(t *testing.T) {
+	huge := strings.Repeat("a", vault.MaxBodyParseSize) + "\x00\n"
+	ix, prof, root := buildVault(t, map[string]string{"Resources/Personal/huge.md": huge})
+	require.True(t, ix.Notes["Resources/Personal/huge.md"].TooLarge,
+		"premise: the note must take the over-cap path")
+
+	fs, err := lint.Run(ix, prof, nil, []string{"note-valid-text"})
+	require.NoError(t, err)
+	got := byRule(fs)["note-valid-text"]
+	require.Len(t, got, 1, "the NUL in the over-cap note must be found: %v", fs)
+	require.Contains(t, got[0].Message, "0x00")
+
+	// An over-cap note that cannot be read cannot be proven valid: the rule
+	// must fail closed with an error finding, never silently pass.
+	require.NoError(t, os.Remove(filepath.Join(root, "Resources", "Personal", "huge.md")))
+	fs, err = lint.Run(ix, prof, nil, []string{"note-valid-text"})
+	require.NoError(t, err)
+	got = byRule(fs)["note-valid-text"]
+	require.Len(t, got, 1)
+	require.Contains(t, got[0].Message, "could not read note")
+	require.Equal(t, lint.Error, got[0].Severity)
+}
 
 func TestNoteValidTextRejectsControlBytes(t *testing.T) {
 	fs := run(t, map[string]string{

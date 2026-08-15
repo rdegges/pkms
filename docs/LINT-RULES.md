@@ -508,6 +508,10 @@ All parametrized by the profile's `[[indexes]]` and count-field declarations.
 - Findings: at most two per note (one per defect kind), each with the count
   and first offending line — a binary file misnamed `.md` cannot flood the
   report.
+- Over-cap notes: an over-`MaxBodyParseSize` note is indexed without its
+  bytes, so the rule stream-scans it from disk in fixed-size chunks. One
+  that cannot be read fails closed with an error finding ("could not read
+  note for text validation") — size or unreadability never buys a pass.
 - Fixable: no (stripping bytes is destructive; repair is the owner's call).
 
 ---

@@ -127,7 +127,7 @@ func runDoctor(cmd *cobra.Command, jsonOut bool) error {
 				assetRefsCheck(v.Name, v.Path, ix, ok, warn, info)
 				// note-text (SPEC §33): every note is valid UTF-8 with no
 				// control bytes.
-				noteTextCheck(v.Name, ix, ok, fail)
+				noteTextCheck(v.Name, v.Path, ix, ok, warn, fail)
 			}
 		}
 
@@ -273,23 +273,47 @@ func assetRefsCheck(vaultName, vaultPath string, ix *vault.Index, ok, warn, info
 // note in the vault is valid UTF-8 and free of control bytes. A hit FAILS
 // doctor (not a warning): corrupt bytes silently break `query --json`
 // (Go's encoder replaces invalid UTF-8) and git diffs, so a vault that
-// reports healthy must be safe for machine reads and edits.
-func noteTextCheck(vaultName string, ix *vault.Index, ok, fail func(name, vault, detail string)) {
-	bad := 0
+// reports healthy must be safe for machine reads and edits. Over-cap
+// (TooLarge) notes are stream-scanned from disk — size must not buy an
+// exemption; a note that cannot be read cannot be proven valid, so it
+// warns instead of counting toward green.
+func noteTextCheck(vaultName, vaultPath string, ix *vault.Index, ok, warn, fail func(name, vault, detail string)) {
+	var bad, unreadable int
 	first := ""
 	for _, rel := range ix.NotePaths() {
-		if rep := vault.ScanText(ix.Notes[rel].Src); !rep.OK() {
+		n := ix.Notes[rel]
+		var rep vault.TextReport
+		if n.TooLarge {
+			var err error
+			rep, err = vault.ScanTextFile(filepath.Join(vaultPath, filepath.FromSlash(rel)))
+			if err != nil {
+				unreadable++
+				continue
+			}
+		} else {
+			rep = vault.ScanText(n.Src)
+		}
+		if !rep.OK() {
 			bad++
 			if first == "" {
 				first = rel
 			}
 		}
 	}
-	if bad > 0 {
-		fail("note-text", vaultName, fmt.Sprintf("%d note(s) contain invalid UTF-8 or control bytes (e.g. %s); `pkms lint --rules note-valid-text` lists them", bad, first))
-		return
+	// %q: the offending path is untrusted bytes headed for a terminal —
+	// a filename can carry the very control bytes this check exists to
+	// catch, so it is always printed escaped.
+	switch {
+	case bad > 0:
+		fail("note-text", vaultName, fmt.Sprintf("%d note(s) contain invalid UTF-8 or control bytes (e.g. %q); `pkms lint --rules note-valid-text` lists them", bad, first))
+	case unreadable > 0:
+		warn("note-text", vaultName, fmt.Sprintf("%d over-cap note(s) could not be read for the text check", unreadable))
+	default:
+		ok("note-text", vaultName, "every note is valid text")
 	}
-	ok("note-text", vaultName, "every note is valid text")
+	if bad > 0 && unreadable > 0 {
+		warn("note-text", vaultName, fmt.Sprintf("%d over-cap note(s) could not be read for the text check", unreadable))
+	}
 }
 
 func writableDir(dir string) error {
