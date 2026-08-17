@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -220,9 +221,16 @@ func TestPDFExtractChildMainRejectsBadAuth(t *testing.T) {
 
 // Extraction spawns a child and marshals through a temp file; a bulk ingest
 // runs many of these. Concurrent calls must neither cross-contaminate their
-// temp files nor race on the shared package state.
+// temp files nor race on the shared package state. Each §31.13 child
+// compiles the wasm engine (~1.1s; several-fold slower under -race), so
+// the deadline is raised for the duration — this test proves ISOLATION,
+// not latency (the §31.12 budgets own latency) — and n stays small
+// enough that a saturated CI runner can still finish every child.
 func TestExtractPDFTextIsSafeInParallel(t *testing.T) {
-	const n = 16
+	oldTimeout := pdfTimeout
+	pdfTimeout = 4 * time.Minute
+	t.Cleanup(func() { pdfTimeout = oldTimeout })
+	const n = 8
 	paths := make([]string, n)
 	for i := range paths {
 		paths[i] = writePDF(t, buildMinimalPDF("document number "+strconv.Itoa(i)))

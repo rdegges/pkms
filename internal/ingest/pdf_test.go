@@ -142,11 +142,18 @@ func TestExtractPDFTextHostileCorpusNeverPanics(t *testing.T) {
 			p := writePDF(t, data)
 			start := time.Now()
 			text, err := ExtractPDFText(p)
-			// Well inside the deadline on purpose: a bound above pdfTimeout
-			// would let a corpus entry that started hanging pass as green off
-			// the timeout path. See TestExtractPDFTextOldHangTriggerNowParses.
-			require.Less(t, time.Since(start), 5*time.Second,
-				"no hostile-corpus entry should approach the %s deadline", pdfTimeout)
+			// An entry that started hanging would ride the deadline and come
+			// back "exceeded" — assert the deadline path never fired instead
+			// of a tight wall-clock bound: under -race the per-child wasm
+			// compile alone takes ~13s, so absolute seconds would measure
+			// instrumentation, not the document (see
+			// TestExtractPDFTextOldHangTriggerNowParses for the old trigger).
+			if err != nil {
+				require.NotContains(t, err.Error(), "exceeded",
+					"hostile-corpus entry rode the %s deadline", pdfTimeout)
+			}
+			require.Less(t, time.Since(start), time.Minute,
+				"hostile-corpus entry took implausibly long even for -race")
 			if err == nil {
 				require.True(t, utf8.ValidString(text), "extracted text must be valid UTF-8, got %q", text)
 				require.NotContains(t, text, "\x00")
@@ -176,11 +183,12 @@ func TestExtractPDFTextDeadlineKillsSlowChild(t *testing.T) {
 
 func TestExtractPDFTextOldHangTriggerNowParses(t *testing.T) {
 	p := writePDF(t, hangCorpusEntry())
-	start := time.Now()
 	_, err := ExtractPDFText(p)
-	require.Less(t, time.Since(start), 5*time.Second,
+	// NoError is the whole assertion: a re-hang would ride the deadline
+	// and come back as an "exceeded" error. No wall-clock bound — under
+	// -race the per-child wasm compile alone takes ~13s of wall time.
+	require.NoError(t, err,
 		"the kids self-cycle must never approach the deadline again")
-	require.NoError(t, err)
 }
 
 func TestExtractPDFTextMalformedEncryptDictTolerated(t *testing.T) {

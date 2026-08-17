@@ -12,8 +12,10 @@ test:
 	$(DOCKER_RUN) go test ./...
 
 # What CI's test step runs (the race detector needs cgo, so no CGO_ENABLED=0).
+# 30m: race instrumentation multiplies the per-child wasm compile that every
+# PDF extraction test pays (§31.13), overrunning go test's 10m default.
 test-race:
-	$(DOCKER_RUN) go test -race ./...
+	$(DOCKER_RUN) go test -race -timeout 30m ./...
 
 # New-user-experience walkthrough as executable scripts (e2e/testdata/).
 e2e:
