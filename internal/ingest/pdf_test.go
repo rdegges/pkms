@@ -102,6 +102,16 @@ func TestMain(m *testing.M) {
 	if PDFExtractChildMain() {
 		return
 	}
+	// Race instrumentation multiplies the per-child wasm compile (§31.13):
+	// ~1.1s plain becomes ~13s locally and rides past the fixed 20s
+	// pdfTimeout on CI runners — observed failing there, on EVERY
+	// extraction test, before this raise. One package-wide headroom beats
+	// per-test whack-a-mole; the deadline-kill test still exercises the
+	// kill path by setting its own sub-compile-time deadline explicitly,
+	// and non-race runs keep the production 20s.
+	if raceDetectorEnabled {
+		pdfTimeout = 4 * time.Minute
+	}
 	os.Exit(m.Run())
 }
 

@@ -15,7 +15,7 @@ test:
 # 30m: race instrumentation multiplies the per-child wasm compile that every
 # PDF extraction test pays (§31.13), overrunning go test's 10m default.
 test-race:
-	$(DOCKER_RUN) go test -race -timeout 30m ./...
+	$(DOCKER_RUN) go test -race -timeout 45m ./...
 
 # New-user-experience walkthrough as executable scripts (e2e/testdata/).
 e2e:
