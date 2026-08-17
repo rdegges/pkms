@@ -25,9 +25,14 @@ func TestEnvOverrides(t *testing.T) {
 
 func TestFallbacksIgnoreRelativeEnv(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "relative/not-allowed") // spec: relative paths are ignored
+	// The cache base is the one where honoring a relative value would write
+	// INTO the working directory — for pkms that can be the vault itself,
+	// and what lands there is ~19 MB of compiled machine code (§31.14).
+	t.Setenv("XDG_CACHE_HOME", "relative/not-allowed")
 	t.Setenv("HOME", "/home/u")
 
 	require.Equal(t, filepath.Join("/home/u", ".config"), ConfigHome())
+	require.Equal(t, filepath.Join("/home/u", ".cache"), CacheHome())
 }
 
 func TestDefaultsAreDotDirs(t *testing.T) {
