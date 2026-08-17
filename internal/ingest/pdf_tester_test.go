@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
@@ -72,6 +73,14 @@ func TestPDFBodyNeutralizesCarriageReturnWithoutLosingText(t *testing.T) {
 	for _, r := range strings.TrimSuffix(body, "\n") {
 		require.False(t, r < 0x20 || r == 0x7f,
 			"note body carries control byte %#x: %q", r, body)
+	}
+	// §31.13 gate ruling: the engine emits \r\n between text runs, and
+	// CRLF collapses to \n BEFORE the bare-\r → space mapping — a line
+	// ending " \n" is vault diff noise and an accidental Markdown hard
+	// break. Pinned so the contract cannot regress silently.
+	for _, line := range strings.Split(body, "\n") {
+		require.False(t, strings.HasSuffix(line, " "),
+			"extracted line ends in a space: %q (body %q)", line, body)
 	}
 }
 
@@ -156,6 +165,13 @@ func TestExtractPDFTextIsDeterministic(t *testing.T) {
 // TestExtractPDFTextTruncatesAtCap already had to be, and the truncation
 // marker is now asserted so the fixture cannot go quiet again.
 func TestPDFBodyIsBoundedOnTheSuccessPath(t *testing.T) {
+	// Deadline headroom for -race: the instrumented per-child wasm compile
+	// alone takes ~13s against the fixed 20s pdfTimeout on a fast machine
+	// — CI runners are slower (BDFL condition at the §31.13 gate; pattern
+	// from TestExtractPDFTextIsSafeInParallel).
+	oldPDFTimeout := pdfTimeout
+	pdfTimeout = 4 * time.Minute
+	t.Cleanup(func() { pdfTimeout = oldPDFTimeout })
 	pages := make([]string, 70)
 	for i := range pages {
 		pages[i] = strings.Repeat("[", 40<<10)

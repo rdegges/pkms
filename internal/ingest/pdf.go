@@ -318,10 +318,15 @@ func escapeBrackets(s string) string {
 }
 
 // neutralizePDFText strips control bytes and escapes wikilink/embed
-// openers. \n and \t pass through; a bare \r becomes a space so a
-// CR-delimited line break never glues two words together (this is also
-// what pdfUndecodable treats \r as — the two agree deliberately).
+// openers. \n and \t pass through; a CRLF pair collapses to \n FIRST
+// (the §31.13 engine emits \r\n between text runs — mapping its \r to a
+// space would end every extracted line in " \n": diff noise in a synced
+// vault and an accidental Markdown hard break); a bare \r then becomes
+// a space so a CR-delimited line break never glues two words together
+// (this is also what pdfUndecodable treats \r as — the two agree
+// deliberately).
 func neutralizePDFText(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.Map(func(r rune) rune {
 		switch {
 		case r == '\n' || r == '\t':

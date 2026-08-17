@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
@@ -106,6 +107,13 @@ func captureStdout(t *testing.T, fn func()) []byte {
 // cap; the fixture spreads the load over enough pages that ACCUMULATION
 // crosses it, which is what §31.6's cap actually guards.
 func TestExtractPDFTextTruncatesAtCap(t *testing.T) {
+	// Deadline headroom for -race: the instrumented per-child wasm compile
+	// alone takes ~13s against the fixed 20s pdfTimeout on a fast machine
+	// — CI runners are slower (BDFL condition at the §31.13 gate; pattern
+	// from TestExtractPDFTextIsSafeInParallel).
+	oldPDFTimeout := pdfTimeout
+	pdfTimeout = 4 * time.Minute
+	t.Cleanup(func() { pdfTimeout = oldPDFTimeout })
 	pages := make([]string, 70)
 	for i := range pages {
 		pages[i] = strings.Repeat("Q", 40<<10)
