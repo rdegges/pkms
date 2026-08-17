@@ -36,6 +36,11 @@ func StateHome() string { return baseDir("XDG_STATE_HOME", filepath.Join(".local
 // DataHome returns the XDG data base (no pkms suffix).
 func DataHome() string { return baseDir("XDG_DATA_HOME", filepath.Join(".local", "share")) }
 
+// CacheHome returns the XDG cache base (no pkms suffix). Cache contents
+// are machine-local and disposable: deleting them costs recomputation,
+// never correctness (SPEC §31.14).
+func CacheHome() string { return baseDir("XDG_CACHE_HOME", ".cache") }
+
 // ConfigFile returns the pkms config path. PKMS_CONFIG overrides everything.
 func ConfigFile() string {
 	if v := os.Getenv("PKMS_CONFIG"); v != "" {
@@ -52,6 +57,11 @@ func StateDir(parts ...string) string {
 // DataDir returns $XDG_DATA_HOME/pkms/<parts...>.
 func DataDir(parts ...string) string {
 	return filepath.Join(append([]string{DataHome(), "pkms"}, parts...)...)
+}
+
+// CacheDir returns $XDG_CACHE_HOME/pkms/<parts...>.
+func CacheDir(parts ...string) string {
+	return filepath.Join(append([]string{CacheHome(), "pkms"}, parts...)...)
 }
 
 // ProfilesDir returns the user-profile directory root.

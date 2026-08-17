@@ -175,14 +175,22 @@ func TestExtractPDFTextHostileCorpusNeverPanics(t *testing.T) {
 // The deadline half of the §31.6 gate: a child that outlives the deadline
 // is killed and reported as a clean error. No known input hangs the
 // §31.13 engine (the old hang trigger parses in milliseconds — asserted
-// below), so the kill path is exercised deterministically instead: the
-// per-child wasm compile alone takes ~1.1s, so a deadline shorter than
-// that fires on ANY document. Both halves keep the gate honest: the kill
-// mechanism works, and the historical trigger stays harmless.
+// below), so the kill path is exercised deterministically instead: with
+// the §31.14 compilation cache DISABLED (an unusable cache base forces
+// the uncached path), the per-child wasm compile alone takes ~1.1s, so
+// a deadline shorter than that fires on ANY document. Both halves keep
+// the gate honest: the kill mechanism works, and the historical trigger
+// stays harmless.
 func TestExtractPDFTextDeadlineKillsSlowChild(t *testing.T) {
 	old := pdfTimeout
 	pdfTimeout = 300 * time.Millisecond
 	t.Cleanup(func() { pdfTimeout = old })
+	// A warm cache would finish the child in ~50ms and the deadline would
+	// never fire — the very speedup §31.14 exists for. Point the cache
+	// base at a file so the child provably compiles from scratch.
+	unusable := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(unusable, []byte("x"), 0o644))
+	t.Setenv("XDG_CACHE_HOME", unusable)
 
 	p := writePDF(t, buildMinimalPDF("seed"))
 	start := time.Now()
