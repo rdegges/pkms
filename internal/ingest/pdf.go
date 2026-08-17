@@ -12,9 +12,13 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/klippa-app/go-pdfium"
 	pdfiumerrors "github.com/klippa-app/go-pdfium/errors"
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/webassembly"
+	"github.com/tetratelabs/wazero"
+
+	"github.com/rdegges/pkms/internal/paths"
 )
 
 // pdfTextCap bounds extracted text (SPEC §31.6), enforced DURING per-page
@@ -97,7 +101,7 @@ func extractPDFInProcess(path string) (text string, err error) {
 			text, err = "", fmt.Errorf("PDF parser panic: %v", r)
 		}
 	}()
-	pool, err := webassembly.Init(webassembly.Config{MinIdle: 1, MaxIdle: 1, MaxTotal: 1})
+	pool, err := initPDFiumPool()
 	if err != nil {
 		return "", err
 	}
@@ -164,6 +168,30 @@ func extractPDFInProcess(path string) (text string, err error) {
 		out += "\n\n[text truncated at the 2 MiB extraction cap]"
 	}
 	return out, nil
+}
+
+// initPDFiumPool builds the child's engine pool, with a persistent
+// wazero compilation cache when one can be opened (SPEC §31.14). The
+// cache turns the per-child ~1.1s wasm compile into a ~0.1s load; every
+// cache problem is only the slow path, never a failure:
+//   - cache dir unusable (not creatable, a file, wrong perms) → compile
+//     without a cache, exactly the pre-§31.14 behavior;
+//   - Init fails WITH a cache configured (e.g. a poisoned/corrupt entry
+//     the engine cannot deserialize) → retry once without the cache.
+//
+// On-disk contents are wazero-version-scoped by wazero itself and keyed
+// by module content, and entries are written atomically (temp + fsync +
+// rename), so concurrent extraction children share the dir safely.
+func initPDFiumPool() (pdfium.Pool, error) {
+	cfg := webassembly.Config{MinIdle: 1, MaxIdle: 1, MaxTotal: 1}
+	if cache, err := wazero.NewCompilationCacheWithDir(paths.CacheDir("wazero")); err == nil {
+		cfg.RuntimeConfig = wazero.NewRuntimeConfig().WithCompilationCache(cache)
+		if pool, err := webassembly.Init(cfg); err == nil {
+			return pool, nil
+		}
+		cfg.RuntimeConfig = nil
+	}
+	return webassembly.Init(cfg)
 }
 
 // ExtractPDFText extracts the plain text of the PDF at path under the

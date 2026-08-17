@@ -44,6 +44,7 @@ LAUNCH="$ROOT/launch-sandbox.sh"
   echo "export XDG_STATE_HOME=\"$XDG_STATE_HOME\""
   echo "export XDG_DATA_HOME=\"$XDG_DATA_HOME\""
   echo "export XDG_CONFIG_HOME=\"$XDG_CONFIG_HOME\""
+  echo "export XDG_CACHE_HOME=\"$XDG_CACHE_HOME\""
   echo "exec claude"
 } > "$LAUNCH"
 chmod +x "$LAUNCH"
@@ -68,6 +69,7 @@ or your vaults.
       CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" \\
       PKMS_CONFIG="$PKMS_CONFIG" XDG_STATE_HOME="$XDG_STATE_HOME" \\
       XDG_DATA_HOME="$XDG_DATA_HOME" XDG_CONFIG_HOME="$XDG_CONFIG_HOME" \\
+      XDG_CACHE_HOME="$XDG_CACHE_HOME" \\
       "$HERE/accept-agent-verify.sh" "$BASE"
 
   Throw the whole sandbox away when done:

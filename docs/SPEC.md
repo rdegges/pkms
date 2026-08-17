@@ -1482,6 +1482,50 @@ What supersedes what:
 
 Frozen docs get amendments, never silent drift (§28 preamble).
 
+### 31.14 Amendment: persistent wazero compilation cache (2026-08-17)
+
+§31.13 adopted an engine whose dominant cost is the per-child wazero
+compile of the embedded `pdfium.wasm` (~1.1 s of the ~1.2 s per
+extraction). The child-per-extraction containment stays; the compile is
+now amortized through wazero's on-disk compilation cache at
+`$XDG_CACHE_HOME/pkms/wazero` (new `paths.CacheHome`/`paths.CacheDir`,
+same XDG-literal rules as the other bases). Measured: first extraction
+~1.1 s (compile + cache write), subsequent extractions ~0.1 s.
+
+**The cache can never fail an extraction — only slow one down.** The
+enumerated postures:
+- cache dir unusable (not creatable, or a file) → compile without a
+  cache, exactly the §31.13 behavior;
+- pool init fails with a cache configured (a poisoned or corrupt entry
+  the engine cannot deserialize; also where an unwritable entry lands —
+  wazero surfaces write failures at init, verified by inspection of
+  wazero v1.12.0 engine.go, not seedable under the root-in-Docker
+  suite) → one retry without the cache;
+- both branches covered by tests that seed the violation (an XDG cache
+  base that is a file; every cached entry overwritten with garbage) and
+  assert extraction still succeeds.
+
+**Consistency and lifecycle.** wazero scopes the directory contents by
+its own version and keys entries by module content, and each entry
+carries an in-entry version stamp checked on load — that stamp is the
+mechanism that keeps an engine or runtime upgrade from reusing stale
+machine code. (Caveat: binaries built without module dependency info —
+plain `go test` binaries — stamp "dev" on both sides and sit outside
+that guarantee, which is one more reason the §15 convention of running
+the suite only inside the pinned Docker image matters.) Upgrades write
+new entries; superseded ones linger (bounded: one compiled module per
+version pair, ~tens of MB) and the whole directory is disposable at any
+time per XDG cache semantics. Entries are written atomically (temp +
+fsync + rename), so concurrent extraction children share the directory
+safely.
+
+**Threat note.** The cache holds compiled machine code executed inside
+the wasm sandbox in the extraction child. An attacker who can write to
+the user's cache dir can already replace the user's binaries and dot
+profiles — the cache adds no new trust boundary — and the child lattice
+(kill-on-deadline, /dev/null stdio, no vault access) still bounds what
+a manipulated engine could do.
+
 ## 32. Phase 3 — agent layer (frozen 2026-08-10)
 
 The final planned phase ships the taste-dependent half of pkms — the part
