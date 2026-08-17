@@ -1,14 +1,31 @@
 # Phase 21: `ingest --json` is a machine-readable contract — stdout carries
-# JSON and nothing else, whatever the input file does. hostile.pdf is the
-# same fixture as phase 20; github.com/ledongthuc/pdf logs parser noise to
-# the process stdout (lex.go:491, read.go:341/849/862), echoing bytes out of
-# the file, which lands in the middle of the JSON payload.
+# JSON and nothing else, whatever the input file does. The extraction child's
+# stdout and stderr go to /dev/null on every path (SPEC §31.6), so no
+# extractor can ever land bytes in the middle of the JSON payload. That
+# lattice is deliberately engine-independent: the previous engine,
+# github.com/ledongthuc/pdf, printed "DEBUG:" lines carrying bytes out of the
+# parsed file straight to the process stdout.
+#
+# TESTER (§31.13): this script used to run only hostile.pdf, whose corrupt
+# catalog the current engine simply TOLERATES — so it stopped exercising a
+# rejected parse, which is exactly where an extractor is most likely to
+# print. Both outcomes are covered now: one document the engine reads, one
+# it rejects.
 
 exec pkms init --path $WORK/vault
 
+# A document the engine reads: the JSON is the only thing on stdout.
 exec pkms ingest --json hostile.pdf
 stdout '^\{'
 ! stdout 'DEBUG'
+! stdout 'x\.png'
+
+# A document the engine REJECTS: the failure still goes to the note, never
+# to stdout, and the JSON payload stays parseable from byte one.
+exec pkms ingest --json broken.pdf
+stdout '^\{'
+! stdout 'DEBUG'
+exec sh -c 'grep "> Text extraction failed:" "$WORK"/vault/_Inbox/*broken.md'
 
 -- hostile.pdf --
 %PDF-1.4
@@ -43,3 +60,7 @@ trailer
 startxref
 423
 %%EOF
+-- broken.pdf --
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pag

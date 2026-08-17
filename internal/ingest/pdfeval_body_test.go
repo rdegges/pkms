@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
@@ -22,6 +23,13 @@ import (
 // wikilinks or embeds, and never empty (an empty body would file a note
 // with no explanation of why).
 func TestPDFEvalFixtureNoteBodiesAreSafe(t *testing.T) {
+	// Deadline headroom for -race: the instrumented per-child wasm compile
+	// alone takes ~13s against the fixed 20s pdfTimeout on a fast machine
+	// — CI runners are slower (BDFL condition at the §31.13 gate; pattern
+	// from TestExtractPDFTextIsSafeInParallel).
+	oldPDFTimeout := pdfTimeout
+	pdfTimeout = 4 * time.Minute
+	t.Cleanup(func() { pdfTimeout = oldPDFTimeout })
 	for _, f := range loadPDFEvalManifest(t, filepath.Join(pdfEvalDir, "manifest.json")) {
 		t.Run(f.Class, func(t *testing.T) {
 			t.Parallel()
@@ -73,6 +81,13 @@ func TestPDFEvalEncryptedFixtureLeaksNoPlaintext(t *testing.T) {
 // observe a difference, and the classes run in parallel — proven safe by
 // TestExtractPDFTextIsSafeInParallel.
 func TestPDFEvalFixtureExtractionIsDeterministic(t *testing.T) {
+	// Deadline headroom for -race: the instrumented per-child wasm compile
+	// alone takes ~13s against the fixed 20s pdfTimeout on a fast machine
+	// — CI runners are slower (BDFL condition at the §31.13 gate; pattern
+	// from TestExtractPDFTextIsSafeInParallel).
+	oldPDFTimeout := pdfTimeout
+	pdfTimeout = 4 * time.Minute
+	t.Cleanup(func() { pdfTimeout = oldPDFTimeout })
 	for _, f := range loadPDFEvalManifest(t, filepath.Join(pdfEvalDir, "manifest.json")) {
 		t.Run(f.Class, func(t *testing.T) {
 			t.Parallel()

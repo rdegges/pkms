@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -59,9 +60,23 @@ func TestPDFBodyNeverMintsLiveWikilink(t *testing.T) {
 	})
 
 	t.Run("failure_hint_path", func(t *testing.T) {
-		// 14-byte swap: a string dict key the parser rejects and echoes back.
-		p := writePDF(t, sameLenMutate(t, buildMinimalPDF("seed"), "/Type /Catalog", "([[[x.png]]) 1"))
+		// TESTER (§31.13): the old fixture — a bracket payload in the catalog
+		// dict — is now EXTRACTED cleanly by pdfium ("seed"), so this subtest
+		// stopped reaching the hint path at all and passed on the success
+		// path under a name that says otherwise (measured: err=nil,
+		// body="seed\n"). Retargeted to the hint route that is still
+		// reachable: os.CreateTemp echoes TMPDIR verbatim into its
+		// *PathError, and TMPDIR is environment-controlled. The payload
+		// therefore reaches err.Error() for real, and this subtest proves
+		// again what it claims to — pdfBody neutralizes the HINT, not just
+		// extracted text.
+		p := writePDF(t, buildMinimalPDF("seed"))
+		t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "x[[[evil.png]]y", "gone"))
+
 		body := pdfBody(p)
+		require.Contains(t, body, "> Text extraction failed: ",
+			"the fixture must reach the hint path, got %q", body)
+		require.Contains(t, body, "evil.png", "the payload must actually reach the hint text")
 		require.Equal(t, -1, firstLiveWikilinkOpener(body),
 			"the extraction-failure hint minted a live wikilink at offset %d of %q",
 			firstLiveWikilinkOpener(body), body)
@@ -78,22 +93,71 @@ func TestPDFBodyNeverMintsLiveWikilink(t *testing.T) {
 // The whole point of the cap is that a hostile document cannot decide how
 // big a note is. Fix: truncate the hint (a few hundred bytes is plenty for a
 // diagnostic) before it reaches the body.
+//
+// TESTER (§31.13): the old fixture — a 3 MiB string in the catalog dict —
+// is now extracted cleanly by pdfium, so this pin was asserting a 6-byte
+// body ("hello\n") against a 2 MiB bound (measured). It proved nothing.
+// Retargeted to the one caller-sized error text still reachable: TMPDIR
+// flows verbatim into os.CreateTemp's *PathError. The bound is tightened
+// from the 2 MiB text cap to the hint's OWN cap, which is what §31.6
+// actually promises about this path.
 func TestPDFBodyHintIsBounded(t *testing.T) {
-	big := strings.Repeat("A", 3<<20)
-	objs := []string{
-		"<< (" + big + ") 1 /Pages 2 0 R >>",
-		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R " +
-			"/Resources << /Font << /F1 5 0 R >> >> >>",
-		contentStream("hello"),
-		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+	// A path built from max-length components (255 bytes each, POSIX
+	// NAME_MAX), well past pdfHintCap. Nothing is created on disk — the
+	// path only has to be reported back inside an error.
+	parts := make([]string, 8)
+	for i := range parts {
+		parts[i] = strings.Repeat("L", 255)
 	}
-	p := writePDF(t, buildPDF(objs, ""))
+	oversized := filepath.Join(append([]string{t.TempDir()}, parts...)...)
+	require.Greater(t, len(oversized), pdfHintCap,
+		"the fixture must exceed the hint cap to test it")
+
+	p := writePDF(t, buildMinimalPDF("hello"))
+	t.Setenv("TMPDIR", oversized)
 
 	body := pdfBody(p)
-	require.LessOrEqual(t, len(body), pdfTextCap,
-		"a hostile PDF sized the note body at %d bytes; §31.6's %d-byte cap must bound EVERY body path, not just the success path",
-		len(body), pdfTextCap)
+	require.Contains(t, body, "> Text extraction failed: ",
+		"the fixture must reach the hint path, got %q", body)
+	require.LessOrEqual(t, len(body), pdfHintCap+64,
+		"a caller-sized error sized the note body at %d bytes; §31.6's cap must bound EVERY body path, not just the success path",
+		len(body))
+	require.Equal(t, 1, strings.Count(body, "\n"), "the hint stays one line")
+}
+
+// TESTER (§31.13): the wiring proof the seam-level retargeting of
+// TestPDFBodyHintStripsTerminalEscapes and
+// TestPDFBodyHintStaysOneLineWhenErrorIsMultiline gave up. Those two now
+// call neutralizePDFHint directly, so nothing left asserts that pdfBody
+// routes the HINT through the neutralizer at all — a pdfBody that pasted
+// err.Error() raw, or that used neutralizePDFText (which keeps newlines),
+// would keep the whole suite green.
+//
+// pdfium's own errors are fixed strings, so the document can no longer
+// smuggle bytes in; the environment still can. TMPDIR reaches err.Error()
+// verbatim through os.CreateTemp's *PathError, carrying both an embed
+// opener and a terminal escape into the one place §31.6 says neither may
+// land.
+func TestPDFBodyHintNeutralizesEnvironmentBorneBytes(t *testing.T) {
+	hostile := filepath.Join(t.TempDir(), "a![[evil.png]]\x1b]0;pwned\x07b", "gone")
+	p := writePDF(t, buildMinimalPDF("hello"))
+	t.Setenv("TMPDIR", hostile)
+
+	body := pdfBody(p)
+	require.Contains(t, body, "> Text extraction failed: ",
+		"the fixture must reach the hint path, got %q", body)
+	require.Contains(t, body, "evil.png", "the payload must actually reach the hint text")
+	require.Contains(t, body, "0;pwned", "the escape's text survives, minus its control bytes")
+
+	require.NotContains(t, body, "![[", "the hint minted a live embed: %q", body)
+	require.Equal(t, -1, firstLiveWikilinkOpener(body),
+		"the hint minted a live wikilink: %q", body)
+	require.Equal(t, 1, strings.Count(body, "\n"),
+		"the hint must stay inside its one blockquote line: %q", body)
+	for _, r := range strings.TrimSuffix(body, "\n") {
+		require.False(t, r < 0x20 || r == 0x7f,
+			"note body carries control byte %#x: %q", r, body)
+	}
 }
 
 // REGRESSION (fixed; pinned): the undecodable-output guard is
@@ -136,34 +200,31 @@ func TestPDFBodyDoesNotFalselyClaimNoText(t *testing.T) {
 
 // --- containment properties that hold today (regression pins) ---------
 
-// The failure hint is written straight out of a hostile file, so a PDF that
-// gets a terminal escape sequence into the library's error text would repaint
-// the user's terminal (and the note) on `cat`. Pinned: control bytes are
-// stripped from the hint.
+// The failure hint renders whatever err.Error() carries. The previous
+// engine echoed hostile DOCUMENT bytes into its errors (this test used to
+// drive an OSC title-set sequence from a real file into the hint);
+// go-pdfium's errors are fixed strings, so the document-borne vector is
+// gone — the neutralizer stays fail-closed for any future error source,
+// pinned at the exact seam pdfBody uses (the degrade tests pin the
+// pdfBody wiring itself).
 func TestPDFBodyHintStripsTerminalEscapes(t *testing.T) {
-	// 14 bytes: an OSC title-set sequence wrapped in a string dict key.
-	p := writePDF(t, sameLenMutate(t, buildMinimalPDF("seed"), "/Type /Catalog", "(\x1b]0;pwned\x07) 1"))
-
-	body := pdfBody(p)
-	require.Contains(t, body, "> Text extraction failed:", "the note still gets a hint")
-	require.Contains(t, body, "]0;pwned", "the fixture must actually reach the hint text")
-	for _, r := range strings.TrimSuffix(body, "\n") {
+	hint := neutralizePDFHint("parse failed near (\x1b]0;pwned\x07)")
+	require.Contains(t, hint, "]0;pwned", "the payload text survives, minus control bytes")
+	for _, r := range hint {
 		require.False(t, r < 0x20 || r == 0x7f,
-			"hint carries control byte %#x; got %q", r, body)
+			"hint carries control byte %#x; got %q", r, hint)
 	}
 }
 
-// A parser error carrying the document's own newlines must still collapse to
-// one blockquote line — a hint that spans lines would break out of the `> `
-// quote and turn attacker bytes into note-level markdown.
+// An error carrying newlines must still collapse to one blockquote line —
+// a hint that spans lines would break out of the `> ` quote and turn its
+// bytes into note-level markdown. Same seam-level retarget as above: the
+// previous engine produced such errors from document bytes; the
+// neutralizer's contract outlives it.
 func TestPDFBodyHintStaysOneLineWhenErrorIsMultiline(t *testing.T) {
-	// 14 bytes, two embedded newlines inside a string dict key.
-	p := writePDF(t, sameLenMutate(t, buildMinimalPDF("seed"), "/Type /Catalog", "(ab\ncd\nefgh) 1"))
-
-	body := pdfBody(p)
-	require.True(t, strings.HasPrefix(body, "> Text extraction failed: "), "got %q", body)
-	require.Equal(t, 1, strings.Count(body, "\n"), "multi-line error leaked extra lines: %q", body)
-	require.Contains(t, body, "ab cd efgh", "newlines collapse to spaces, text is kept")
+	hint := neutralizePDFHint("ab\ncd\nefgh")
+	require.NotContains(t, hint, "\n", "multi-line error leaked line breaks: %q", hint)
+	require.Equal(t, "ab cd efgh", hint, "newlines collapse to spaces, text is kept")
 }
 
 // Extraction infrastructure failure is not the document's fault and must not
@@ -223,9 +284,16 @@ func TestPDFExtractChildMainRejectsBadAuth(t *testing.T) {
 
 // Extraction spawns a child and marshals through a temp file; a bulk ingest
 // runs many of these. Concurrent calls must neither cross-contaminate their
-// temp files nor race on the shared package state.
+// temp files nor race on the shared package state. Each §31.13 child
+// compiles the wasm engine (~1.1s; several-fold slower under -race), so
+// the deadline is raised for the duration — this test proves ISOLATION,
+// not latency (the §31.12 budgets own latency) — and n stays small
+// enough that a saturated CI runner can still finish every child.
 func TestExtractPDFTextIsSafeInParallel(t *testing.T) {
-	const n = 16
+	oldTimeout := pdfTimeout
+	pdfTimeout = 4 * time.Minute
+	t.Cleanup(func() { pdfTimeout = oldTimeout })
+	const n = 8
 	paths := make([]string, n)
 	for i := range paths {
 		paths[i] = writePDF(t, buildMinimalPDF("document number "+strconv.Itoa(i)))

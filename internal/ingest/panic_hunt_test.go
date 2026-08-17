@@ -7,10 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
-
-	"github.com/ledongthuc/pdf"
 )
 
 // TestHuntPanic sweeps mutations of the golden PDF against the raw
@@ -26,23 +25,12 @@ func TestHuntPanic(t *testing.T) {
 		_ = os.WriteFile(p, data, 0o644)
 		done := make(chan string, 1)
 		go func() {
-			defer func() {
-				if r := recover(); r != nil {
-					done <- fmt.Sprintf("PANIC %v", r)
-				}
-			}()
-			f, rd, err := pdf.Open(p)
-			if err != nil {
-				done <- ""
+			// extractPDFInProcess recovers engine panics into a "PDF
+			// parser panic" error; the sweep watches for that and hangs.
+			_, err := extractPDFInProcess(p)
+			if err != nil && strings.Contains(err.Error(), "PDF parser panic") {
+				done <- fmt.Sprintf("PANIC %v", err)
 				return
-			}
-			defer f.Close()
-			for i := 1; i <= rd.NumPage(); i++ {
-				pg := rd.Page(i)
-				if pg.V.IsNull() {
-					continue
-				}
-				_, _ = pg.GetPlainText(nil)
 			}
 			done <- ""
 		}()

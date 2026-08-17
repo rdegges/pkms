@@ -155,10 +155,13 @@ wikilinked, large ones content-addressed outside the vault (they bloat git
 and break Obsidian Sync). `pkms doctor` reports any attachment that has
 moved or gone missing.
 
-> Note on PDF text quality: extraction uses a pure-Go library that does not
-> yet decode subset/CID fonts (common in Word- and browser-generated PDFs);
-> those land as an asset note with the PDF stored but no extracted text. A
-> stronger extractor is tracked as a follow-up.
+> Note on PDF text extraction: pkms embeds PDFium (Chrome's PDF engine)
+> compiled to WebAssembly and run sandboxed in pure Go — no cgo, no system
+> dependencies. It decodes the subset/CID fonts that Word, Google Docs and
+> LaTeX emit (measured 9/9 readable on a real-world corpus; adopted by the
+> eval in SPEC §31.12). Extraction costs about a second per PDF and ~10MiB
+> of binary size; an image-only scan honestly lands as an asset note with
+> no extracted text. Third-party license notices: THIRD-PARTY.md.
 
 ## Agents: the judgment layer
 

@@ -12,7 +12,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ledongthuc/pdf"
+	pdfiumerrors "github.com/klippa-app/go-pdfium/errors"
+	"github.com/klippa-app/go-pdfium/requests"
+	"github.com/klippa-app/go-pdfium/webassembly"
 )
 
 // pdfTextCap bounds extracted text (SPEC §31.6), enforced DURING per-page
@@ -28,13 +30,15 @@ var pdfTimeout = 20 * time.Second
 
 var errPDFEncrypted = errors.New("PDF is encrypted; text extraction skipped")
 
-// Extraction runs out-of-process because github.com/ledongthuc/pdf
-// fmt.Printfs attacker-controlled bytes to the PROCESS stdout mid-parse
-// (lex.go "DEBUG: …" and friends) — which corrupts `ingest --json` and can
-// write terminal escapes to the user's TTY. The child's stdout/stderr are
-// wired to /dev/null, and that holds on every path including timeout-kill,
-// which in-process fd juggling cannot guarantee (the abandoned goroutine
-// could print after the JSON was emitted).
+// Extraction runs out-of-process regardless of engine (SPEC §31.12: the
+// child lattice is containment independent of extractor internals). The
+// kill-on-deadline is real hang containment no in-process guard matches,
+// stdout/stderr → /dev/null holds on every path including timeout-kill,
+// and a parser crash or memory blowup dies in the child, never the
+// ingest run. go-pdfium's wazero sandbox is defense-in-depth on top,
+// never a substitute. (Historical: the previous engine, ledongthuc/pdf,
+// also printed attacker-controlled bytes to stdout mid-parse — the
+// original reason this lattice exists.)
 const (
 	pdfChildEnv      = "PKMS_PDF_EXTRACT_CHILD"
 	pdfExitEncrypted = 3
@@ -79,41 +83,69 @@ func PDFExtractChildMain() bool {
 	return true // unreachable
 }
 
-// extractPDFInProcess is the raw extraction: recover() because the library
-// panics on malformed input (15 unrecovered panic sites in read.go), and
-// the §31.6 cap enforced as pages accumulate. It runs ONLY in the child.
+// extractPDFInProcess is the raw extraction via go-pdfium/webassembly
+// (adopted by measurement — SPEC §31.13; the ledongthuc/pdf engine it
+// replaces read ~3/9 of the real corpus). It runs ONLY in the child, so
+// the wazero compile+instantiate of the embedded pdfium.wasm is paid per
+// extraction — measured ~1.1s, inside the §31.12 latency budget. The
+// recover() is defense-in-depth (the wasm engine returns errors rather
+// than panicking, but the previous engine taught us not to rely on it),
+// and the §31.6 cap is enforced as pages accumulate.
 func extractPDFInProcess(path string) (text string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			text, err = "", fmt.Errorf("PDF parser panic: %v", r)
 		}
 	}()
-	f, rd, err := pdf.Open(path)
+	pool, err := webassembly.Init(webassembly.Config{MinIdle: 1, MaxIdle: 1, MaxTotal: 1})
 	if err != nil {
-		if errors.Is(err, pdf.ErrInvalidPassword) {
+		return "", err
+	}
+	defer func() { _ = pool.Close() }()
+	inst, err := pool.GetInstance(pdfTimeout)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = inst.Close() }()
+
+	doc, err := inst.OpenDocument(&requests.OpenDocument{FilePath: &path})
+	if err != nil {
+		// ErrPassword = a user password is required; ErrSecurity = an
+		// unsupported protection scheme. Both mean "encrypted, cannot
+		// extract" — the §31.6 hint, never a garbage body.
+		if errors.Is(err, pdfiumerrors.ErrPassword) || errors.Is(err, pdfiumerrors.ErrSecurity) {
 			return "", errPDFEncrypted
 		}
 		return "", err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		_, _ = inst.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
+	}()
+
+	pc, err := inst.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
+	if err != nil {
+		return "", err
+	}
 
 	var b strings.Builder
-	fonts := map[string]*pdf.Font{}
 	truncated := false
-	for i := 1; i <= rd.NumPage() && !truncated; i++ {
-		p := rd.Page(i)
-		if p.V.IsNull() {
-			continue
-		}
-		pageText, perr := p.GetPlainText(fonts)
+	for i := 0; i < pc.PageCount && !truncated; i++ {
+		res, perr := inst.GetPageText(&requests.GetPageText{
+			Page: requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: i}},
+		})
 		if perr != nil {
 			continue // one broken page never sinks the document
 		}
-		// Per-page undecodable check: a subset CID / Identity-H page comes
-		// back as NUL-laced glyph ids. Drop THAT page (not the document) so
-		// a mixed PDF still yields the pages that decoded (SPEC §31.6
-		// honesty ruling — a note must never lie "no text" over real text).
-		if pdfUndecodable(pageText) {
+		// Per-page garbage screen, refined for this engine (§31.13):
+		// pdfium marks a glyph it cannot map to text as U+0002, so a page
+		// of real prose can carry a few control runes (math symbols,
+		// exotic ligatures). Those become U+FFFD — visible, honest, never
+		// raw control bytes in a note. A page that is MOSTLY control
+		// runes is undecoded glyph-id output and is dropped whole, same
+		// as the §31.6 ruling always demanded. Both halves of that ruling
+		// hold: no garbage in a body, and never "no text" over real text.
+		pageText, garbage := sanitizePDFPageText(res.Text)
+		if garbage {
 			continue
 		}
 		if b.Len() >= pdfTextCap {
@@ -136,11 +168,11 @@ func extractPDFInProcess(path string) (text string, err error) {
 
 // ExtractPDFText extracts the plain text of the PDF at path under the
 // §31.6 containment lattice, via the child process described above. The
-// result is always valid UTF-8; text the library could not actually
-// decode (CID/Identity-H subset fonts come back as NUL-laced glyph ids —
-// the default output of Word/Chrome-era producers) is reported as empty:
-// "no extractable text" is the truthful answer, binary garbage in a note
-// body never is.
+// result is always valid UTF-8; output the engine could not actually
+// decode into text is reported as empty: "no extractable text" is the
+// truthful answer, binary garbage in a note body never is. With the
+// §31.13 engine, CID/Identity-H subset fonts (Word, Google Docs, pdfTeX
+// producers) decode — the committed pdfeval fixtures assert it in CI.
 func ExtractPDFText(path string) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -205,11 +237,41 @@ func randomNonce() (string, error) {
 	return hex.EncodeToString(b[:]), nil
 }
 
+// sanitizePDFPageText prepares one page of engine output (§31.13):
+// control runes other than \n/\t/\r — pdfium's marker for glyphs with no
+// text mapping is U+0002 — become U+FFFD, and the page is reported as
+// garbage when more than 10% of its runes were control bytes: that ratio
+// separates undecoded glyph-id output (historically ~all control bytes)
+// from real prose with isolated unmappable symbols (measured ~0.6% on
+// arXiv pdfTeX papers). The returned text contains no control bytes by
+// construction.
+func sanitizePDFPageText(s string) (string, bool) {
+	total, ctrl := 0, 0
+	out := strings.Map(func(r rune) rune {
+		total++
+		if r == '\n' || r == '\t' || r == '\r' {
+			return r
+		}
+		if r < 0x20 || r == 0x7f {
+			ctrl++
+			return '�'
+		}
+		return r
+	}, s)
+	if total == 0 {
+		return "", false
+	}
+	return out, ctrl*10 > total
+}
+
 // pdfUndecodable reports control-byte-laced output — the signature of
-// glyph ids the library returned undecoded. Such "text" must never land
-// in a note body; notes are text files (§31.6 honesty ruling). \n, \t and
-// \r are legitimate whitespace, not garbage (matching neutralizePDFText's
-// treatment of \r — resolved deliberately in one direction).
+// glyph ids an engine returned undecoded. Such "text" must never land
+// in a note body; notes are text files (§31.6 honesty ruling). It backs
+// the parent-side fail-closed check in ExtractPDFText (the child's
+// sanitizer means it should never fire there — defense in depth). \n,
+// \t and \r are legitimate whitespace, not garbage (matching
+// neutralizePDFText's treatment of \r — resolved deliberately in one
+// direction).
 func pdfUndecodable(text string) bool {
 	for _, r := range text {
 		if r == '\n' || r == '\t' || r == '\r' {
@@ -256,10 +318,15 @@ func escapeBrackets(s string) string {
 }
 
 // neutralizePDFText strips control bytes and escapes wikilink/embed
-// openers. \n and \t pass through; a bare \r becomes a space so a
-// CR-delimited line break never glues two words together (this is also
-// what pdfUndecodable treats \r as — the two agree deliberately).
+// openers. \n and \t pass through; a CRLF pair collapses to \n FIRST
+// (the §31.13 engine emits \r\n between text runs — mapping its \r to a
+// space would end every extracted line in " \n": diff noise in a synced
+// vault and an accidental Markdown hard break); a bare \r then becomes
+// a space so a CR-delimited line break never glues two words together
+// (this is also what pdfUndecodable treats \r as — the two agree
+// deliberately).
 func neutralizePDFText(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
 	s = strings.Map(func(r rune) rune {
 		switch {
 		case r == '\n' || r == '\t':

@@ -13,10 +13,10 @@ import (
 
 // The committed §31.12 eval fixtures (testdata/pdfeval/, provenance in
 // manifest.json and scripts/gen-pdf-fixtures/). This file is untagged and
-// asserts only the CURRENT §31.6 contract over them; the readability
-// metric — which the incumbent is expected to fail on Identity-H
-// producers — lives behind -tags pdfeval (pdfeval_test.go), because it
-// judges candidates at the PR3 decision gate, not this library.
+// carries the §31.13 contract over them, readability assertions included —
+// the adoption amendment promoted those into blocking CI. The full
+// scorecard over the maintainer's larger local corpus stays behind
+// -tags pdfeval (pdfeval_test.go); it is a measurement tool, not a gate.
 
 // pdfEvalDir holds the committed fixtures; §31.12 budgets keep the whole
 // directory small enough to live in the repo (cap enforced below).
@@ -128,13 +128,18 @@ func TestPDFEvalManifestIntegrity(t *testing.T) {
 	}
 }
 
-// The CURRENT contract over the committed fixtures — the assertions a
-// §31.12 candidate swap must keep (and, for the honest-empty ones, flip
-// to must-extract in the adoption amendment):
-//   - text fixtures never yield control-byte garbage on any path,
-//   - Identity-H producers (word-export, chrome-print) yield the honest
-//     "no extractable text" outcome under the incumbent,
-//   - the scan class yields the same honest empty outcome,
+// The §31.13 contract over the committed fixtures — the readability
+// assertions PROMOTED to untagged, blocking CI by the adoption amendment
+// (each run pays the ~1.1s per-child wasm compile; five fixtures ≈ 6s,
+// accepted at the plan gate):
+//   - text fixtures MUST extract, and must contain ALL 3 of their
+//     manifest ground-truth phrases under the frozen §31.12 metric
+//     (under the previous engine all three were honest-empty — the
+//     baseline PR #20 recorded),
+//   - no text fixture may ever yield control-byte garbage on any path,
+//   - the scan class yields the honest empty outcome (the previous
+//     engine rejected its spec-legal "%PDF-1.4 " trailing-space header
+//     outright; the §31.13 engine parses it and finds no text layer),
 //   - the encrypted fixture maps to errPDFEncrypted.
 func TestPDFEvalFixturesCurrentContract(t *testing.T) {
 	for _, f := range loadPDFEvalManifest(t, filepath.Join(pdfEvalDir, "manifest.json")) {
@@ -146,16 +151,7 @@ func TestPDFEvalFixturesCurrentContract(t *testing.T) {
 				require.ErrorIs(t, err, errPDFEncrypted)
 				require.Empty(t, text, "an encrypted document leaks no plaintext")
 			case "no-text":
-				// Incumbent quirk, pinned: ImageMagick writes a legal
-				// "%PDF-1.4 " header (trailing space; qpdf --check passes)
-				// that ledongthuc/pdf rejects outright, so today the scan
-				// class degrades to the error hint instead of the honest
-				// empty outcome. Either way NO text may be yielded. The
-				// §31.12 candidate bar (honest empty) gates at PR3.
-				if err != nil {
-					require.ErrorContains(t, err, "invalid header",
-						"the incumbent's only known failure here is its strict header check")
-				}
+				require.NoError(t, err, "a well-formed raster-only scan parses cleanly")
 				require.Empty(t, text, "a raster-only scan has no text layer to extract")
 			case "text":
 				require.NoError(t, err)
@@ -167,17 +163,11 @@ func TestPDFEvalFixturesCurrentContract(t *testing.T) {
 						"control byte %#x at offset %d — notes are text files (§31.6)", r, i)
 				}
 				require.NotContains(t, pdfBody(path), "\x00", "no NUL byte may reach a note body")
-				// The incumbent decodes NONE of the three real-producer text
-				// fixtures — Identity-H subset fonts for word-export and
-				// chrome-print, and tectonic's subset encoding for
-				// latex-paper (measured: phrases 0/3 for all three). "No
-				// extractable text" is the truthful answer (§31.6). Pinned
-				// for every text class: latex-paper was previously
-				// unasserted, so its class could flip between text and empty
-				// — in either direction — with the suite still green. The
-				// §31.12 adoption amendment flips these to must-extract.
-				require.Empty(t, text,
-					"incumbent contract: %s yields the honest empty outcome, never garbage", f.Class)
+				got := normalizePDFEvalText(text)
+				for _, phrase := range f.Phrases {
+					require.Contains(t, got, normalizePDFEvalText(phrase),
+						"%s must contain its ground-truth phrase (§31.13 must-extract)", f.File)
+				}
 			default:
 				t.Fatalf("unknown expect %q", f.Expect)
 			}
