@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -160,6 +161,26 @@ func TestExtractPDFTextPageTextIsExact(t *testing.T) {
 	require.Equal(t, 16255, len(text), "one Tj page must extract to exactly its string")
 }
 
+// TESTER (§31.13): the OTHER calibration the cap fixtures now depend on.
+// TestExtractPDFTextTruncatesAtCap and TestPDFBodyIsBoundedOnTheSuccessPath
+// both spread their payload over 70 pages because the engine truncates a
+// single page at 32,767 chars — a number that appears only in their
+// comments. Pinned here so an engine upgrade that changes it fails with a
+// message that says so, instead of quietly making both cap fixtures stop
+// reaching the cap (which is exactly how those fixtures went vacuous in
+// this diff).
+func TestExtractPDFTextPerPageCeiling(t *testing.T) {
+	const asked = 40 << 10 // comfortably past the ceiling
+	p := writePDF(t, buildPagesPDF([]string{strings.Repeat("Q", asked)}))
+
+	text, err := ExtractPDFText(p)
+	require.NoError(t, err)
+	require.Equal(t, 32767, len(text),
+		"the engine's per-page text ceiling moved; the 70-page cap fixtures are calibrated to %d", 32767)
+	require.NotContains(t, text, "[text truncated at the 2 MiB extraction cap]",
+		"one page can never reach the 2 MiB cap while the per-page ceiling stands")
+}
+
 // --- hostile text never becomes live vault markup -------------------
 
 // REGRESSION (fixed; pinned): the success path neutralizes `![[`, but the
@@ -173,13 +194,22 @@ func TestExtractPDFTextPageTextIsExact(t *testing.T) {
 // Blockquotes do not disable embeds in Obsidian, so this transcludes.
 // Fix: run the same neutralization over the hint text in pdfBody, not just
 // over the extracted text.
+//
+// TESTER (§31.13): the old fixture — `(![[x.png]]) 1` swapped over
+// `/Type /Catalog` — is now tolerated by pdfium and extracts as "seed"
+// (measured), so this pin was checking a success-path body for an embed it
+// never contained. Retargeted to a payload that still reaches err.Error():
+// TMPDIR, which os.CreateTemp echoes verbatim into its *PathError. The
+// asserted invariant is unchanged — no input may put a live embed in a
+// note body on the FAILURE path.
 func TestPDFBodyNeutralizesEmbedsOnFailurePath(t *testing.T) {
-	valid := buildMinimalPDF("seed")
-	// "/Type /Catalog" and "(![[x.png]]) 1" are both 14 bytes.
-	hostile := sameLenMutate(t, valid, "/Type /Catalog", "(![[x.png]]) 1")
-	p := writePDF(t, hostile)
+	p := writePDF(t, buildMinimalPDF("seed"))
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "x![[x.png]]y", "gone"))
 
 	body := pdfBody(p)
+	require.Contains(t, body, "> Text extraction failed: ",
+		"the fixture must reach the failure path, got %q", body)
+	require.Contains(t, body, "x.png", "the payload must actually reach the hint text")
 	require.NotContains(t, body, "![[",
 		"no PDF input may put a live embed in a note body, on any path; got %q", body)
 }
@@ -191,17 +221,38 @@ func TestPDFBodyNeutralizesEmbedsOnFailurePath(t *testing.T) {
 // and the echoed bytes are unfiltered (terminal escapes included).
 // Fix options: redirect os.Stdout for the duration of the extraction
 // goroutine, run extraction in a subprocess, or vendor/patch the library.
+//
+// TESTER (§31.13): the old single fixture (a control-byte dict key over
+// `/Type /Catalog`) is now tolerated by pdfium and extracts as "seed"
+// (measured), so this pin no longer exercised a rejected parse — the case
+// where an engine is most likely to print. Widened to BOTH engine outcomes:
+// a document pdfium rejects (truncated → "3: incorrect format") and one it
+// accepts, with the fixture's own outcome asserted so neither half can go
+// quiet again.
 func TestExtractPDFTextWritesNothingToProcessStdout(t *testing.T) {
 	valid := buildMinimalPDF("seed")
-	// 14-byte swap: a non-name dict key carrying raw control bytes.
-	hostile := sameLenMutate(t, valid, "/Type /Catalog", "0ZAPPED\x1b\x07\x1b\x07abc")
-	p := writePDF(t, hostile)
+	cases := map[string]struct {
+		data     []byte
+		wantHint bool
+	}{
+		"engine rejects the document": {valid[:len(valid)/2], true},
+		"engine accepts a corrupt catalog": {
+			sameLenMutate(t, valid, "/Type /Catalog", "0ZAPPED\x1b\x07\x1b\x07abc"), false,
+		},
+	}
+	for name, c := range cases {
+		t.Run(strings.ReplaceAll(name, " ", "_"), func(t *testing.T) {
+			p := writePDF(t, c.data)
 
-	var body string
-	out := captureStdout(t, func() { body = pdfBody(p) })
-	require.NotEmpty(t, body, "the note still gets a hint")
-	require.Empty(t, string(out),
-		"PDF extraction must not write to the process stdout (`ingest --json` emits there); got %q", out)
+			var body string
+			out := captureStdout(t, func() { body = pdfBody(p) })
+			require.NotEmpty(t, body, "the note still gets a body")
+			require.Equal(t, c.wantHint, strings.HasPrefix(body, "> Text extraction failed: "),
+				"fixture drifted off the path it was written for; body=%q", body)
+			require.Empty(t, string(out),
+				"PDF extraction must not write to the process stdout (`ingest --json` emits there); got %q", out)
+		})
+	}
 }
 
 // --- degradation paths ----------------------------------------------
@@ -228,6 +279,33 @@ func TestExtractPDFTextEncryptedMapsToEncryptedError(t *testing.T) {
 	require.ErrorIs(t, err, errPDFEncrypted)
 	require.Empty(t, text, "an encrypted document leaks no plaintext")
 	require.Contains(t, pdfBody(p), "encrypted", "the note lands with a one-line hint")
+}
+
+// TESTER (§31.13): the adoption amendment added a SECOND error class to the
+// encrypted mapping — pdfium's ErrSecurity, "an unsupported protection
+// scheme" — and nothing covered it. The document above is a standard
+// handler pkms could in principle unlock; this one names a handler pdfium
+// does not implement at all, which is the case a DRM'd or vendor-encrypted
+// PDF hits in a real vault. Both must degrade to the honest §31.6 hint, and
+// neither may leak plaintext or a garbage body.
+func TestExtractPDFTextUnsupportedSecurityHandlerMapsToEncryptedError(t *testing.T) {
+	objs := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R " +
+			"/Resources << /Font << /F1 5 0 R >> >> >>",
+		contentStream("secret"),
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		"<< /Filter /BogusHandler /V 4 /R 4 /Length 128 /P -1 >>",
+	}
+	const id = "<0102030405060708090a0b0c0d0e0f10>"
+	p := writePDF(t, buildPDF(objs, " /Encrypt 6 0 R /ID ["+id+" "+id+"]"))
+
+	text, err := ExtractPDFText(p)
+	require.ErrorIs(t, err, errPDFEncrypted,
+		"an unsupported security handler must reach the §31.6 encrypted hint, not a raw engine error")
+	require.Empty(t, text, "an encrypted document leaks no plaintext")
+	require.NotContains(t, pdfBody(p), "secret", "no plaintext may reach the note body")
 }
 
 // A structurally valid PDF with no text operators gets the dedicated

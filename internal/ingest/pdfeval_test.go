@@ -24,16 +24,17 @@ import (
 // "-\n" hyphenation join + whitespace collapse — and prints a per-document
 // PASS/FAIL scorecard with wall times.
 //
-// Readability failures are the scorecard's DATA, never a test failure:
-// with the go-pdfium/webassembly §31.13, the word-export and chrome-print
-// fixtures are EXPECTED to fail (Identity-H subset fonts — today's
-// honest-empty baseline). §31.12's bars judge CANDIDATES at the PR3
-// decision gate; this run only fails on contract violations the incumbent
-// must already honor: control-byte garbage in output, a no-text fixture
-// yielding text, or the encrypted fixture missing the errPDFEncrypted
-// hint. A real corpus that is absent prints a loud skip banner and the
-// run still passes — but per §31.12 NO candidate is ADOPTABLE without it
-// (adoption fails closed; only rejection can be decided from fixtures).
+// Readability failures are the scorecard's DATA, never a test failure.
+// TESTER: under the adopted §31.13 engine every text fixture is expected to
+// PASS — the pre-adoption note here still said word-export and chrome-print
+// were expected to FAIL, which inverted the whole point of the amendment.
+// The blocking version of those readability assertions now lives untagged
+// in pdfeval_fixtures_test.go; this run only fails on contract violations:
+// control-byte garbage in output, a no-text fixture yielding text, or the
+// encrypted fixture missing the errPDFEncrypted hint. A real corpus that is
+// absent prints a loud skip banner and the run still passes — but per
+// §31.12 NO candidate is ADOPTABLE without it (adoption fails closed; only
+// rejection can be decided from fixtures).
 //
 // Run it with `make pdf-eval` (the pinned measurement environment).
 func TestPDFEval(t *testing.T) {

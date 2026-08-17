@@ -13,10 +13,10 @@ import (
 
 // The committed §31.12 eval fixtures (testdata/pdfeval/, provenance in
 // manifest.json and scripts/gen-pdf-fixtures/). This file is untagged and
-// asserts only the CURRENT §31.6 contract over them; the readability
-// metric — which the incumbent is expected to fail on Identity-H
-// producers — lives behind -tags pdfeval (pdfeval_test.go), because it
-// judges candidates at the PR3 decision gate, not this library.
+// carries the §31.13 contract over them, readability assertions included —
+// the adoption amendment promoted those into blocking CI. The full
+// scorecard over the maintainer's larger local corpus stays behind
+// -tags pdfeval (pdfeval_test.go); it is a measurement tool, not a gate.
 
 // pdfEvalDir holds the committed fixtures; §31.12 budgets keep the whole
 // directory small enough to live in the repo (cap enforced below).

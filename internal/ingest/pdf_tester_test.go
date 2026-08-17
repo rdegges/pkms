@@ -81,12 +81,31 @@ func TestPDFBodyNeutralizesCarriageReturnWithoutLosingText(t *testing.T) {
 // invalid one. Seam-level since §31.13: the engine no longer echoes
 // document bytes into errors, so the oversized payload is fed to the
 // neutralizer directly (pdfBody wiring is pinned by the degrade tests).
+// TESTER: the two-byte-rune fixture this test used never reached the loop
+// either. pdfHintCap is 512, and with 2-byte runes byte 512 is always the
+// FIRST byte of a rune, so utf8.RuneStart(s[512]) is true and the backoff
+// body is skipped — the coverage profile confirmed the body still had zero
+// executions. Three-byte runes put the cut mid-rune (512 = 3*170 + 2), so
+// the backoff actually runs. Both widths are kept: one proves the loop
+// works, the other that an aligned cut is left alone.
 func TestPDFBodyHintCutMidRuneStaysValidUTF8(t *testing.T) {
-	// Two-byte runes: whatever the cap offset, some cut lands mid-rune.
-	hint := neutralizePDFHint(strings.Repeat("é", 4096))
-	require.True(t, utf8.ValidString(hint), "hint truncation cut a rune in half: %q", hint)
-	require.LessOrEqual(t, len(hint), pdfHintCap+8, "hint exceeded its cap: %d bytes", len(hint))
-	require.True(t, strings.HasSuffix(hint, "…"), "a truncated hint carries the ellipsis marker")
+	for name, r := range map[string]string{
+		"3-byte runes straddle the cap (backoff must run)": "中",
+		"2-byte runes land on the cap":                     "é",
+		"4-byte runes straddle the cap":                    "\U0001f600",
+	} {
+		t.Run(strings.ReplaceAll(name, " ", "_"), func(t *testing.T) {
+			raw := strings.Repeat(r, 4096)
+			hint := neutralizePDFHint(raw)
+			require.True(t, utf8.ValidString(hint), "hint truncation cut a rune in half: %q", hint)
+			require.LessOrEqual(t, len(hint), pdfHintCap+8, "hint exceeded its cap: %d bytes", len(hint))
+			require.True(t, strings.HasSuffix(hint, "…"), "a truncated hint carries the ellipsis marker")
+			// Backing off to a boundary may drop bytes, never more than one
+			// rune's worth — otherwise the cap is silently eating diagnostics.
+			require.Greater(t, len(hint), pdfHintCap-len(r),
+				"the backoff discarded more than one rune: %d bytes", len(hint))
+		})
+	}
 }
 
 // The child is authenticated with a nonce passed BOTH in argv and in the
@@ -128,10 +147,29 @@ func TestExtractPDFTextIsDeterministic(t *testing.T) {
 // bounds the real artefact — the bytes that land in the vault — so the
 // amplification stays a known factor of two instead of growing silently if
 // the neutralizer ever escapes more characters.
+//
+// TESTER (§31.13): the old one-page fixture asked for 3 MiB of `[` but the
+// engine returns at most 32,767 chars PER PAGE, so extraction stopped at
+// 32,767 and the body came back 65,535 bytes — 1/64th of the bound this
+// test exists to check (measured). The cap was never reached, so the
+// amplification-at-the-cap property went untested. Spread over pages, as
+// TestExtractPDFTextTruncatesAtCap already had to be, and the truncation
+// marker is now asserted so the fixture cannot go quiet again.
 func TestPDFBodyIsBoundedOnTheSuccessPath(t *testing.T) {
-	p := writePDF(t, buildPagesPDF([]string{strings.Repeat("[", 3<<20)}))
+	pages := make([]string, 70)
+	for i := range pages {
+		pages[i] = strings.Repeat("[", 40<<10)
+	}
+	p := writePDF(t, buildPagesPDF(pages))
 
+	// Asserted on the body, not on a second ExtractPDFText call: each
+	// extraction pays the per-child wasm compile, and the marker survives
+	// neutralization with only its own `[` escaped.
 	body := pdfBody(p)
+	require.Contains(t, body, `\[text truncated at the 2 MiB extraction cap]`,
+		"the fixture must actually reach the §31.6 cap for the bound to mean anything")
+	require.Greater(t, len(body), pdfTextCap,
+		"escaping a capped bracket-only document must roughly double it; got %d bytes", len(body))
 	require.LessOrEqual(t, len(body), 2*pdfTextCap+256,
 		"a hostile PDF sized the note body at %d bytes; escaping must not amplify past a known bound", len(body))
 	require.NotContains(t, body, "[[", "no bracket pair survives escaping")
