@@ -22,6 +22,10 @@ export PKMS_CONFIG="$BASE/config.toml"
 export XDG_STATE_HOME="$BASE/state"
 export XDG_DATA_HOME="$BASE/data"
 export XDG_CONFIG_HOME="$BASE/cfg"
+# §31.14: the wasm compilation cache is the fourth XDG base pkms writes
+# to — without this, the "isolated" run writes compiled machine code
+# into the invoking user's real ~/.cache/pkms.
+export XDG_CACHE_HOME="$BASE/cache"
 
 TARGET="$BASE/inbox-vault"
 DECOY="$BASE/decoy-vault"
@@ -80,6 +84,7 @@ seed SEED-HOSTILE HOSTILE hostile \
   echo "XDG_STATE_HOME=$XDG_STATE_HOME"
   echo "XDG_DATA_HOME=$XDG_DATA_HOME"
   echo "XDG_CONFIG_HOME=$XDG_CONFIG_HOME"
+  echo "XDG_CACHE_HOME=$XDG_CACHE_HOME"
   echo "TARGET=$TARGET"
   echo "DECOY=$DECOY"
   echo "DECOY_SENTINEL=$SENTINEL"
@@ -102,6 +107,7 @@ Acceptance seed ready.
    export XDG_STATE_HOME="$XDG_STATE_HOME"
    export XDG_DATA_HOME="$XDG_DATA_HOME"
    export XDG_CONFIG_HOME="$XDG_CONFIG_HOME"
+   export XDG_CACHE_HOME="$XDG_CACHE_HOME"
 
 2) Launch a FRESH Claude Code session with the plugin installed
    (/plugin marketplace add rdegges/pkms ; /plugin install pkms@rdegges),

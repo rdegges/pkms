@@ -1493,19 +1493,27 @@ same XDG-literal rules as the other bases). Measured: first extraction
 ~1.1 s (compile + cache write), subsequent extractions ~0.1 s.
 
 **The cache can never fail an extraction — only slow one down.** The
-enumerated postures (§15):
-- cache dir unusable (not creatable, a file, bad perms) → compile
-  without a cache, exactly the §31.13 behavior;
+enumerated postures:
+- cache dir unusable (not creatable, or a file) → compile without a
+  cache, exactly the §31.13 behavior;
 - pool init fails with a cache configured (a poisoned or corrupt entry
-  the engine cannot deserialize) → one retry without the cache;
-- both covered by tests that seed the violation (an XDG cache base that
-  is a file; every cached entry overwritten with garbage) and assert
-  extraction still succeeds.
+  the engine cannot deserialize; also where an unwritable entry lands —
+  wazero surfaces write failures at init, verified by inspection of
+  wazero v1.12.0 engine.go, not seedable under the root-in-Docker
+  suite) → one retry without the cache;
+- both branches covered by tests that seed the violation (an XDG cache
+  base that is a file; every cached entry overwritten with garbage) and
+  assert extraction still succeeds.
 
 **Consistency and lifecycle.** wazero scopes the directory contents by
-its own version and keys entries by module content, so an engine or
-runtime upgrade can never reuse stale machine code — it writes new
-entries; superseded ones linger (bounded: one compiled module per
+its own version and keys entries by module content, and each entry
+carries an in-entry version stamp checked on load — that stamp is the
+mechanism that keeps an engine or runtime upgrade from reusing stale
+machine code. (Caveat: binaries built without module dependency info —
+plain `go test` binaries — stamp "dev" on both sides and sit outside
+that guarantee, which is one more reason the §15 convention of running
+the suite only inside the pinned Docker image matters.) Upgrades write
+new entries; superseded ones linger (bounded: one compiled module per
 version pair, ~tens of MB) and the whole directory is disposable at any
 time per XDG cache semantics. Entries are written atomically (temp +
 fsync + rename), so concurrent extraction children share the directory
