@@ -11,7 +11,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/ledongthuc/pdf"
 	"github.com/stretchr/testify/require"
 )
 
@@ -64,9 +63,12 @@ func mutate(valid []byte, old, new string) []byte {
 }
 
 // hostileCorpus: malformed PDFs that must never crash or hang the binary
-// (SPEC §31.6). The panicsRaw entries are OBSERVED to panic the raw
-// library (see TestRawLibraryPanicsOnHostileInput and the -tags panichunt
-// sweep that found them); "kids self-cycle" is OBSERVED to hang it.
+// (SPEC §31.6). Historical: several entries were OBSERVED to panic the
+// previous engine (ledongthuc/pdf), and "kids self-cycle" to hang it —
+// that history is why the recover wrapper and the kill-on-deadline exist.
+// The §31.13 engine returns errors for all of them (pinned by
+// TestRawEngineSurvivesHostileInput); the corpus stays as the regression
+// net for future engine upgrades.
 func hostileCorpus() map[string][]byte {
 	valid := buildMinimalPDF("seed")
 	return map[string][]byte{
@@ -85,13 +87,13 @@ func hostileCorpus() map[string][]byte {
 	}
 }
 
-// hangCorpus: inputs OBSERVED to make the raw library loop forever — the
-// §31.6 deadline is the only defense (found by the -tags panichunt sweep).
-func hangCorpus() map[string][]byte {
+// hangCorpusEntry: the input OBSERVED to loop the previous engine forever
+// (found by the -tags panichunt sweep). The §31.13 engine parses it in
+// milliseconds; it lives on inside hostileCorpus-style coverage below and
+// documents why the deadline exists.
+func hangCorpusEntry() []byte {
 	valid := buildMinimalPDF("seed")
-	return map[string][]byte{
-		"kids self-cycle": mutate(valid, "/Kids [3 0 R]", "/Kids [2 0 R]"),
-	}
+	return mutate(valid, "/Kids [3 0 R]", "/Kids [2 0 R]")
 }
 
 // TestMain lets this test binary serve as ExtractPDFText's re-exec child
@@ -110,36 +112,26 @@ func TestExtractPDFTextGolden(t *testing.T) {
 	require.Contains(t, text, "Hello PDF extraction works")
 }
 
-// The RED half of the §31.6 gate: prove the threat is real by observing
-// the RAW library panic on at least one corpus entry. If a library
-// upgrade ever makes this pass without panicking, the wrapper's recover
-// is no longer load-bearing — re-evaluate, don't delete.
-func TestRawLibraryPanicsOnHostileInput(t *testing.T) {
-	panicked := 0
+// The engine-behavior pin (§31.13 retarget of the old RED-half gate).
+// The previous engine, ledongthuc/pdf, was OBSERVED to panic on this
+// corpus — that observation justified the recover wrapper. go-pdfium's
+// wasm engine returns errors instead; this test pins that: every hostile
+// entry must come back as error-or-text with no panic surfacing (a panic
+// inside extractPDFInProcess is recovered into a "PDF parser panic"
+// error, so the assertion is on the error text). If an engine upgrade
+// ever trips this, the recover wrapper caught a real regression —
+// re-evaluate, don't delete.
+func TestRawEngineSurvivesHostileInput(t *testing.T) {
 	for name, data := range hostileCorpus() {
 		p := writePDF(t, data)
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					panicked++
-					t.Logf("raw pdf.Open/walk panicked on %q: %v", name, r)
-				}
-			}()
-			f, rd, err := pdf.Open(p)
-			if err != nil {
-				return
-			}
-			defer func() { _ = f.Close() }()
-			for i := 1; i <= rd.NumPage(); i++ {
-				pg := rd.Page(i)
-				if pg.V.IsNull() {
-					continue
-				}
-				_, _ = pg.GetPlainText(nil)
-			}
-		}()
+		text, err := extractPDFInProcess(p)
+		if err != nil {
+			require.NotContains(t, err.Error(), "PDF parser panic",
+				"the engine panicked on %q — the recover wrapper just became load-bearing", name)
+			continue
+		}
+		require.False(t, pdfUndecodable(text), "hostile entry %q yielded control-byte garbage", name)
 	}
-	require.Positive(t, panicked, "no corpus entry panicked the raw library — the recover wrapper is untested")
 }
 
 // The GREEN half: the wrapper survives the whole corpus — error or text,
@@ -152,7 +144,7 @@ func TestExtractPDFTextHostileCorpusNeverPanics(t *testing.T) {
 			text, err := ExtractPDFText(p)
 			// Well inside the deadline on purpose: a bound above pdfTimeout
 			// would let a corpus entry that started hanging pass as green off
-			// the timeout path. Entries that hang belong in hangCorpus.
+			// the timeout path. See TestExtractPDFTextOldHangTriggerNowParses.
 			require.Less(t, time.Since(start), 5*time.Second,
 				"no hostile-corpus entry should approach the %s deadline", pdfTimeout)
 			if err == nil {
@@ -163,40 +155,51 @@ func TestExtractPDFTextHostileCorpusNeverPanics(t *testing.T) {
 	}
 }
 
-// The deadline half of the §31.6 gate: inputs that loop the raw parser
-// forever must come back as clean errors when the deadline fires.
-func TestExtractPDFTextDeadlineStopsHangs(t *testing.T) {
+// The deadline half of the §31.6 gate: a child that outlives the deadline
+// is killed and reported as a clean error. No known input hangs the
+// §31.13 engine (the old hang trigger parses in milliseconds — asserted
+// below), so the kill path is exercised deterministically instead: the
+// per-child wasm compile alone takes ~1.1s, so a deadline shorter than
+// that fires on ANY document. Both halves keep the gate honest: the kill
+// mechanism works, and the historical trigger stays harmless.
+func TestExtractPDFTextDeadlineKillsSlowChild(t *testing.T) {
 	old := pdfTimeout
-	pdfTimeout = 2 * time.Second
+	pdfTimeout = 300 * time.Millisecond
 	t.Cleanup(func() { pdfTimeout = old })
 
-	for name, data := range hangCorpus() {
-		t.Run(strings.ReplaceAll(name, " ", "_"), func(t *testing.T) {
-			p := writePDF(t, data)
-			start := time.Now()
-			_, err := ExtractPDFText(p)
-			require.ErrorContains(t, err, "exceeded")
-			require.Less(t, time.Since(start), 10*time.Second)
-		})
-	}
+	p := writePDF(t, buildMinimalPDF("seed"))
+	start := time.Now()
+	_, err := ExtractPDFText(p)
+	require.ErrorContains(t, err, "exceeded")
+	require.Less(t, time.Since(start), 10*time.Second)
 }
 
-func TestExtractPDFTextEncryptedDegrades(t *testing.T) {
-	// A trailer whose /Encrypt points at a nonexistent object: the library
-	// rejects the encryption dictionary before any password check, so this
-	// exercises the malformed-/Encrypt path, NOT the encrypted-document path
-	// (errPDFEncrypted lives in TestExtractPDFTextEncryptedMapsToEncryptedError,
-	// which uses a real standard-handler fixture). Pinned to the observed
-	// error so the two cases cannot quietly swap places.
+func TestExtractPDFTextOldHangTriggerNowParses(t *testing.T) {
+	p := writePDF(t, hangCorpusEntry())
+	start := time.Now()
+	_, err := ExtractPDFText(p)
+	require.Less(t, time.Since(start), 5*time.Second,
+		"the kids self-cycle must never approach the deadline again")
+	require.NoError(t, err)
+}
+
+func TestExtractPDFTextMalformedEncryptDictTolerated(t *testing.T) {
+	// A trailer whose /Encrypt points at a nonexistent object. The previous
+	// engine rejected the document ("encryption filter" error); the §31.13
+	// engine tolerates the dangling reference and extracts normally. Pinned
+	// so the malformed-/Encrypt path and the real encrypted-document path
+	// (TestExtractPDFTextEncryptedMapsToEncryptedError, which uses a real
+	// standard-handler fixture) cannot quietly swap places: this document
+	// must NEVER map to errPDFEncrypted.
 	valid := buildMinimalPDF("secret")
 	tampered := bytes.Replace(valid,
 		[]byte("trailer\n<< /Size 6 /Root 1 0 R >>"),
 		[]byte("trailer\n<< /Size 6 /Root 1 0 R /Encrypt 9 0 R >>"), 1)
 	require.NotEqual(t, valid, tampered, "fixture tamper must apply")
 	p := writePDF(t, tampered)
-	_, err := ExtractPDFText(p)
-	require.ErrorContains(t, err, "encryption filter")
-	require.NotErrorIs(t, err, errPDFEncrypted)
+	text, err := ExtractPDFText(p)
+	require.NoError(t, err)
+	require.Contains(t, text, "secret")
 }
 
 func TestPDFBodyNeutralizesEmbeds(t *testing.T) {

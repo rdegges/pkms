@@ -1419,6 +1419,69 @@ readability assertions are promoted to untagged blocking CI (accounting
 for the per-run wasm compile cost), keeping the never-garbage assertions
 either way.
 
+### 31.13 Amendment: go-pdfium/webassembly ADOPTED (supersedes §31.6's engine, 2026-08-16)
+
+The §31.12 eval ran and ruled. Baseline (ledongthuc/pdf): 3/9 text-bearing
+real-corpus documents readable — Word 365, Google Docs (Skia) and pdfTeX
+producers all yielded honest-empty. Candidate (go-pdfium/webassembly
+v1.19.8, PDFium compiled to wasm, executed by wazero, CGO_ENABLED=0):
+**9/9 text-bearing readable and 11/11 overall against the SHA-256-frozen
+corpus; 5/5 committed fixtures.** Budgets: stripped darwin/arm64 release
+binary 28,311,650 B — **+9.94 MiB** vs the 17.06 MiB baseline (ceiling
++12 MiB); per-document extraction (fresh child, wasm compile included)
+**~1.2 s median / 1.33 s max** on the corpus (budgets 2.5 s / 5 s).
+ADOPTABLE by the frozen rule; adopted.
+
+What supersedes what:
+
+- **Engine.** `extractPDFInProcess` now drives go-pdfium's `webassembly`
+  package. The child lattice (§31.6: sentinel + nonce, stdout/stderr →
+  /dev/null, kill-on-deadline, 2 MiB accumulation cap) is UNCHANGED and
+  stays engine-independent; wazero's sandbox is defense-in-depth, never
+  a substitute. `ledongthuc/pdf` leaves go.mod entirely.
+- **Identity-H flips to must-extract.** §31.6's honest-empty contract
+  for subset/CID fonts is superseded: the committed word-export,
+  chrome-print and latex-paper fixtures MUST extract and contain all 3
+  of their manifest phrases under the frozen §31.12 metric, asserted
+  untagged in blocking CI (the promotion §31.12 ordered; ~1.1 s wasm
+  compile per extraction, five fixtures ≈ 6 s, accepted). The
+  never-garbage assertions are KEPT.
+- **Per-page screen refined.** pdfium marks an unmappable glyph as
+  U+0002, so a page of real prose can carry isolated control runes.
+  `sanitizePDFPageText` maps them to U+FFFD and drops a page only when
+  >10% of its runes were control bytes — undecoded glyph-id output
+  (historically ~all control bytes) still dies; a real page with a few
+  unmappable symbols no longer does. Both halves of the §31.6 honesty
+  ruling hold: no control bytes in a body (by construction), and never
+  "no text" over real text (the eval proved the old screen violated
+  this: it amputated all 16 pages of an arXiv paper over 0.6% stray
+  markers). `pdfUndecodable` remains as the parent-side fail-closed
+  backstop.
+- **Engine behavior pins updated, observed first.** The engine returns
+  errors instead of panicking on the hostile corpus (pinned:
+  `TestRawEngineSurvivesHostileInput`); the old kids-self-cycle hang
+  trigger parses in milliseconds (pinned) and the kill path is
+  exercised deterministically by a deadline shorter than the wasm
+  compile; a truncated file fails as "3: incorrect format" and drives
+  the degrade-to-asset-note path; a malformed /Encrypt reference is
+  tolerated (pinned as must-NOT-map-to-errPDFEncrypted); real
+  encryption maps ErrPassword AND ErrSecurity → `errPDFEncrypted`; the
+  engine caps a single page's text at 32,767 chars, so the §31.6 cap
+  test accumulates across pages; the spec-legal trailing-space header
+  the old engine rejected now parses (the scan class asserts honest
+  empty, as §31.12 always defined it).
+- **Error-echo threat retired, neutralizers kept.** pdfium's errors are
+  fixed strings — a document can no longer smuggle bytes into the
+  failure hint. `neutralizePDFText`/`neutralizePDFHint` stay fail-closed
+  for extracted text and any future error source, pinned at their seams.
+- **Notices.** THIRD-PARTY.md ships the verbatim license texts: PDFium's
+  own LICENSE carries BOTH BSD-3-Clause and Apache-2.0 (resolved from
+  pdfium.googlesource.com — upstream READMEs disagree, §31.12 predicted
+  it), go-pdfium is MIT, wazero is Apache-2.0. go.mod pins
+  github.com/klippa-app/go-pdfium v1.19.8 (proxy-verified, §25).
+
+Frozen docs get amendments, never silent drift (§28 preamble).
+
 ## 32. Phase 3 — agent layer (frozen 2026-08-10)
 
 The final planned phase ships the taste-dependent half of pkms — the part

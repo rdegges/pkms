@@ -29,7 +29,9 @@ func TestPDFBodyKeepsEveryPageAndItsLineStructure(t *testing.T) {
 	require.Equal(t, texts, splitPageTexts(text), "pages must arrive complete and in document order")
 
 	body := pdfBody(p)
-	require.Greater(t, strings.Count(body, "\n"), len(texts),
+	// One \n per page boundary plus the trailing one (the §31.13 engine
+	// emits single-line pages with no trailing newline of their own).
+	require.GreaterOrEqual(t, strings.Count(body, "\n"), len(texts),
 		"neutralization collapsed the page structure into one line: %q", body)
 	require.Contains(t, body, "page 00 body")
 	require.Contains(t, body, "page 11 body")
@@ -76,25 +78,15 @@ func TestPDFBodyNeutralizesCarriageReturnWithoutLosingText(t *testing.T) {
 // The hint cap slices at a byte offset and walks back to a rune boundary. No
 // test ever put a multi-byte rune ON that boundary, so the backoff loop was
 // never executed — a note is a UTF-8 file, and a cut mid-rune writes an
-// invalid one.
+// invalid one. Seam-level since §31.13: the engine no longer echoes
+// document bytes into errors, so the oversized payload is fed to the
+// neutralizer directly (pdfBody wiring is pinned by the degrade tests).
 func TestPDFBodyHintCutMidRuneStaysValidUTF8(t *testing.T) {
 	// Two-byte runes: whatever the cap offset, some cut lands mid-rune.
-	big := strings.Repeat("é", 4096)
-	objs := []string{
-		"<< (" + big + ") 1 /Pages 2 0 R >>",
-		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R " +
-			"/Resources << /Font << /F1 5 0 R >> >> >>",
-		contentStream("hello"),
-		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-	}
-	p := writePDF(t, buildPDF(objs, ""))
-
-	body := pdfBody(p)
-	require.True(t, strings.HasPrefix(body, "> Text extraction failed: "), "got %q", body)
-	require.True(t, utf8.ValidString(body), "hint truncation cut a rune in half: %q", body)
-	require.LessOrEqual(t, len(body), pdfHintCap+64, "hint exceeded its cap: %d bytes", len(body))
-	require.Equal(t, 1, strings.Count(body, "\n"))
+	hint := neutralizePDFHint(strings.Repeat("é", 4096))
+	require.True(t, utf8.ValidString(hint), "hint truncation cut a rune in half: %q", hint)
+	require.LessOrEqual(t, len(hint), pdfHintCap+8, "hint exceeded its cap: %d bytes", len(hint))
+	require.True(t, strings.HasSuffix(hint, "…"), "a truncated hint carries the ellipsis marker")
 }
 
 // The child is authenticated with a nonce passed BOTH in argv and in the

@@ -1,12 +1,12 @@
-# Phase 20: a HOSTILE PDF through the real CLI (SPEC §31.6). hostile.pdf is
-# 19-ingest-pdf.txtar's paper.pdf with "/Type /Catalog" swapped for the
-# same-length "(![[x.png]]) 1" — a dictionary key the parser rejects, and whose
-# bytes the library echoes back inside its error text. The file length is
-# unchanged, so the xref offsets stay valid and parsing reaches the object.
+# Phase 20: HOSTILE PDFs through the real CLI (SPEC §31.6 + §31.13).
+# hostile.pdf carries a live Obsidian embed in its PAGE TEXT — the §31.13
+# engine extracts it faithfully, so neutralization must land it escaped,
+# never live (a blockquote does not disable transclusion in Obsidian).
+# broken.pdf is a truncated document the engine rejects ("incorrect
+# format") — the record degrades to an asset note with a one-line hint.
 #
-# The invariant: extraction failure degrades to an asset note with a hint,
-# and NO PDF can put a live ![[...]] embed into a note body. A blockquote
-# does not disable transclusion in Obsidian, so the hint is not a shield.
+# The invariant: NO PDF can put a live ![[...]] embed into a note body,
+# and extraction failure is never a refusal.
 
 exec pkms init --path $WORK/vault
 
@@ -14,16 +14,21 @@ exec pkms ingest hostile.pdf
 stdout 'ingested → _Inbox/.* - hostile\.md'
 exists $WORK/vault/Attachments/hostile.pdf
 
-# The note lands with the one-line hint (failure is never a refusal).
-exec sh -c 'grep "> Text extraction failed:" "$WORK"/vault/_Inbox/*hostile.md'
-
-# ...but the hint must not carry the attacker's embed into the vault.
+# The extracted text lands with the embed DEFUSED: every `[` escaped.
+exec sh -c 'grep -F "!\[\[x.png]]" "$WORK"/vault/_Inbox/*hostile.md'
 ! exec sh -c 'grep -F "![[x.png]]" "$WORK"/vault/_Inbox/*hostile.md'
+
+exec pkms ingest broken.pdf
+stdout 'ingested → _Inbox/.* - broken\.md'
+exists $WORK/vault/Attachments/broken.pdf
+
+# The note lands with the one-line hint (failure is never a refusal).
+exec sh -c 'grep "> Text extraction failed:" "$WORK"/vault/_Inbox/*broken.md'
 
 -- hostile.pdf --
 %PDF-1.4
 1 0 obj
-<< (![[x.png]]) 1 /Pages 2 0 R >>
+<< /Type /Catalog /Pages 2 0 R >>
 endobj
 2 0 obj
 << /Type /Pages /Kids [3 0 R] /Count 1 >>
@@ -32,9 +37,9 @@ endobj
 << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
 endobj
 4 0 obj
-<< /Length 62 >>
+<< /Length 54 >>
 stream
-BT /F1 12 Tf 72 720 Td (Hello from the pkms e2e fixture) Tj ET
+BT /F1 12 Tf 72 720 Td (see ![[x.png]] embedded) Tj ET
 endstream
 endobj
 5 0 obj
@@ -47,9 +52,13 @@ xref
 0000000058 00000 n 
 0000000115 00000 n 
 0000000241 00000 n 
-0000000353 00000 n 
+0000000345 00000 n 
 trailer
 << /Size 6 /Root 1 0 R >>
 startxref
-423
+415
 %%EOF
+-- broken.pdf --
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pag

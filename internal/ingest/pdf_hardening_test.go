@@ -136,34 +136,31 @@ func TestPDFBodyDoesNotFalselyClaimNoText(t *testing.T) {
 
 // --- containment properties that hold today (regression pins) ---------
 
-// The failure hint is written straight out of a hostile file, so a PDF that
-// gets a terminal escape sequence into the library's error text would repaint
-// the user's terminal (and the note) on `cat`. Pinned: control bytes are
-// stripped from the hint.
+// The failure hint renders whatever err.Error() carries. The previous
+// engine echoed hostile DOCUMENT bytes into its errors (this test used to
+// drive an OSC title-set sequence from a real file into the hint);
+// go-pdfium's errors are fixed strings, so the document-borne vector is
+// gone — the neutralizer stays fail-closed for any future error source,
+// pinned at the exact seam pdfBody uses (the degrade tests pin the
+// pdfBody wiring itself).
 func TestPDFBodyHintStripsTerminalEscapes(t *testing.T) {
-	// 14 bytes: an OSC title-set sequence wrapped in a string dict key.
-	p := writePDF(t, sameLenMutate(t, buildMinimalPDF("seed"), "/Type /Catalog", "(\x1b]0;pwned\x07) 1"))
-
-	body := pdfBody(p)
-	require.Contains(t, body, "> Text extraction failed:", "the note still gets a hint")
-	require.Contains(t, body, "]0;pwned", "the fixture must actually reach the hint text")
-	for _, r := range strings.TrimSuffix(body, "\n") {
+	hint := neutralizePDFHint("parse failed near (\x1b]0;pwned\x07)")
+	require.Contains(t, hint, "]0;pwned", "the payload text survives, minus control bytes")
+	for _, r := range hint {
 		require.False(t, r < 0x20 || r == 0x7f,
-			"hint carries control byte %#x; got %q", r, body)
+			"hint carries control byte %#x; got %q", r, hint)
 	}
 }
 
-// A parser error carrying the document's own newlines must still collapse to
-// one blockquote line — a hint that spans lines would break out of the `> `
-// quote and turn attacker bytes into note-level markdown.
+// An error carrying newlines must still collapse to one blockquote line —
+// a hint that spans lines would break out of the `> ` quote and turn its
+// bytes into note-level markdown. Same seam-level retarget as above: the
+// previous engine produced such errors from document bytes; the
+// neutralizer's contract outlives it.
 func TestPDFBodyHintStaysOneLineWhenErrorIsMultiline(t *testing.T) {
-	// 14 bytes, two embedded newlines inside a string dict key.
-	p := writePDF(t, sameLenMutate(t, buildMinimalPDF("seed"), "/Type /Catalog", "(ab\ncd\nefgh) 1"))
-
-	body := pdfBody(p)
-	require.True(t, strings.HasPrefix(body, "> Text extraction failed: "), "got %q", body)
-	require.Equal(t, 1, strings.Count(body, "\n"), "multi-line error leaked extra lines: %q", body)
-	require.Contains(t, body, "ab cd efgh", "newlines collapse to spaces, text is kept")
+	hint := neutralizePDFHint("ab\ncd\nefgh")
+	require.NotContains(t, hint, "\n", "multi-line error leaked line breaks: %q", hint)
+	require.Equal(t, "ab cd efgh", hint, "newlines collapse to spaces, text is kept")
 }
 
 // Extraction infrastructure failure is not the document's fault and must not

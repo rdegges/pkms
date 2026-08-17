@@ -25,7 +25,7 @@ import (
 // PASS/FAIL scorecard with wall times.
 //
 // Readability failures are the scorecard's DATA, never a test failure:
-// with the incumbent ledongthuc/pdf, the word-export and chrome-print
+// with the go-pdfium/webassembly §31.13, the word-export and chrome-print
 // fixtures are EXPECTED to fail (Identity-H subset fonts — today's
 // honest-empty baseline). §31.12's bars judge CANDIDATES at the PR3
 // decision gate; this run only fails on contract violations the incumbent
@@ -37,7 +37,7 @@ import (
 //
 // Run it with `make pdf-eval` (the pinned measurement environment).
 func TestPDFEval(t *testing.T) {
-	fmt.Println("=== §31.12 PDF readability scorecard (extractor: incumbent ledongthuc/pdf) ===")
+	fmt.Println("=== §31.12 PDF readability scorecard (extractor: go-pdfium/webassembly §31.13) ===")
 
 	// Metric self-check first: a decodable Type1 document the incumbent CAN
 	// read (buildMinimalPDF, the §31.6 golden builder), with phrases that

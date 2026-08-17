@@ -99,10 +99,17 @@ func captureStdout(t *testing.T, fn func()) []byte {
 
 // --- the 2 MiB cap (SPEC §31.6) -------------------------------------
 
-// A page whose text blows past the cap is truncated in place, marked, and
-// still valid UTF-8. The cap path had zero coverage before this test.
+// Text that blows past the cap is truncated in place, marked, and still
+// valid UTF-8. The engine returns at most 32,767 chars per page (measured
+// — an FPDF text-page bound), so a single huge page can never cross the
+// cap; the fixture spreads the load over enough pages that ACCUMULATION
+// crosses it, which is what §31.6's cap actually guards.
 func TestExtractPDFTextTruncatesAtCap(t *testing.T) {
-	p := writePDF(t, buildPagesPDF([]string{strings.Repeat("Q", 3<<20)}))
+	pages := make([]string, 70)
+	for i := range pages {
+		pages[i] = strings.Repeat("Q", 40<<10)
+	}
+	p := writePDF(t, buildPagesPDF(pages))
 
 	text, err := ExtractPDFText(p)
 	require.NoError(t, err)
@@ -363,10 +370,12 @@ func TestExtractPDFTextNeverEmitsControlBytes(t *testing.T) {
 
 // A PDF that fails extraction still lands as a full asset note: type,
 // contract fields, stored asset, and the hint body (§31.6 — failure is
-// never a refusal).
+// never a refusal). A truncated file fails the engine's format check
+// ("3: incorrect format" — the §31.13 engine tolerates the corrupt-
+// catalog mutation the previous fixture used).
 func TestFileRecordPDFDegradesToAssetNote(t *testing.T) {
 	valid := buildMinimalPDF("seed")
-	p := writePDF(t, sameLenMutate(t, valid, "/Type /Catalog", "(![[x.png]]) 1"))
+	p := writePDF(t, valid[:len(valid)/2])
 
 	rec, err := FileRecord(context.Background(), p, testTypes, noHooks, testNow)
 	require.NoError(t, err, "extraction failure must never fail the record")
@@ -380,7 +389,7 @@ func TestFileRecordPDFDegradesToAssetNote(t *testing.T) {
 // The same for the URL path: a hostile remote PDF degrades, never errors.
 func TestURLRecordPDFDegradesToAssetNote(t *testing.T) {
 	valid := buildMinimalPDF("seed")
-	g := fakeDownloader{t: t, body: sameLenMutate(t, valid, "/Type /Catalog", "(![[x.png]]) 1")}
+	g := fakeDownloader{t: t, body: valid[:len(valid)/2]}
 
 	rec, cleanup, err := URLRecord(t.Context(), g, "https://example.com/x.pdf", testTypes, noHooks, 0, testNow)
 	defer cleanup()
