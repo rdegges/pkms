@@ -73,7 +73,8 @@ Conventions:
   `2026-07-15`). Ambiguous (`05/07/2026`) and empty/null report-only.
 
 ### person-required-keys
-- Severity: error. Scope: person notes.
+- Severity: error (warning on profiles that list person in
+  `frontmatter-schema.warning_types` — rdegges does). Scope: person notes.
 - Check: `last_met` (ISO date), `meeting_count` (integer ≥ 0), `topics` (list
   of strings) all present. No `type` key is required (none documented, none
   observed).
@@ -90,8 +91,9 @@ Conventions:
 - Fixable: **yes** — lowercase; spaces/underscores → `-`.
 
 ### meeting-required-keys
-- Severity: error. Scope: meeting notes (`HHMM - *.md`; excludes
-  `daily-brief.md` / `pre-brief.md`).
+- Severity: error (warning on profiles that list meeting in
+  `frontmatter-schema.warning_types` — rdegges does). Scope: meeting notes
+  (`HHMM - *.md`; excludes `daily-brief.md` / `pre-brief.md`).
 - Check: `date` (ISO), `time` (`"HH:MM - HH:MM"`), `duration` (integer
   minutes), `type: meeting`, `has_transcript` (boolean), `attendees` (list of
   `"[[Full Name]]"` strings), `tags` (list containing `meeting` + the

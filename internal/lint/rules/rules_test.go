@@ -191,31 +191,40 @@ x
 		// Person with a wrong-typed field: person is in warning_types
 		// (pre-schema history at scale, like meeting).
 		"People/Snyk/Broken Person.md": "---\nlast_met: 2026-05-06\nmeeting_count: lots\ntopics: [ai]\n---\nx\n",
+		// The shape that actually put person on the list: a pre-schema note
+		// with none of the required keys, not merely a mistyped one.
+		"People/Snyk/Pre-Schema Person.md": "---\nname: Jane\n---\nx\n",
 		// Daily-brief missing tags: NOT in warning_types, so this must
 		// stay an error — pins the default severity path.
 		"Meetings/Snyk/2026/05/06/daily-brief.md": "---\ndate: 2026-05-06\ntype: daily-brief\n---\nx\n",
 	}, "frontmatter-schema")
 	m := byRule(fs)
 	require.NotEmpty(t, m["frontmatter-schema"])
-	schemaPaths := []string{}
-	for _, f := range m["frontmatter-schema"] {
-		schemaPaths = append(schemaPaths, f.Path)
+
+	// Every fixture must actually produce a finding. Without this, a fixture
+	// that stops failing the schema silently skips its severity assertion
+	// below and the test still passes.
+	// project/meeting/person are in warning_types because the reference
+	// vault's history predates their schemas; daily-brief is not, so it
+	// keeps the default Error severity.
+	wantSeverity := map[string]lint.Severity{
+		"Projects/Personal/loose.md":                lint.Warning,
+		"Meetings/Snyk/2026/05/06/1100 - Broken.md": lint.Warning,
+		"People/Snyk/Broken Person.md":              lint.Warning,
+		"People/Snyk/Pre-Schema Person.md":          lint.Warning,
+		"Meetings/Snyk/2026/05/06/daily-brief.md":   lint.Error,
 	}
-	require.Contains(t, schemaPaths, "Meetings/Snyk/2026/05/06/daily-brief.md",
-		"the Error-severity path must actually be exercised")
+	seen := map[string]bool{}
 	for _, f := range m["frontmatter-schema"] {
-		switch f.Path {
-		case "Projects/Personal/loose.md":
-			require.Equal(t, lint.Warning, f.Severity, "project schema failures are warnings")
-		case "Meetings/Snyk/2026/05/06/1100 - Broken.md":
-			require.Equal(t, lint.Warning, f.Severity,
-				"meeting is in warning_types: the reference vault's history predates the schema")
-		case "People/Snyk/Broken Person.md":
-			require.Equal(t, lint.Warning, f.Severity,
-				"person is in warning_types: the reference vault's history predates the schema")
-		default:
-			require.Equal(t, lint.Error, f.Severity)
+		seen[f.Path] = true
+		want, ok := wantSeverity[f.Path]
+		if !ok {
+			want = lint.Error // default severity: type not in warning_types
 		}
+		require.Equal(t, want, f.Severity, "%s: %s", f.Path, f.Message)
+	}
+	for path := range wantSeverity {
+		require.True(t, seen[path], "fixture %s produced no schema finding", path)
 	}
 }
 
