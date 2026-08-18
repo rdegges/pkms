@@ -272,7 +272,8 @@ Conventions:
 ### no-junk-files
 - Severity: warning. Scope: vault-wide, excluding `.obsidian/` and the
   allowlisted attachments folder.
-- Check: no `*.bak`, `.DS_Store`, `* conflicted copy*`, `~$*`, `*.tmp`, and no
+- Check: no `*.bak`, `.DS_Store`, `* (Conflicted copy*` (Obsidian Sync's
+  capitalized artifact name), `* conflicted copy*`, `~$*`, `*.tmp`, and no
   leading-underscore scratch files outside sanctioned templates
   (`_template.md` allowed). (Reference vault: 17 `.bak` + 3 `.DS_Store`
   today.)

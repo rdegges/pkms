@@ -188,13 +188,26 @@ x
 `,
 		// Project missing everything → warnings (warning_types).
 		"Projects/Personal/loose.md": "---\nstatus: active\n---\nx\n",
+		// Person with a wrong-typed field: person is NOT in warning_types,
+		// so this must stay an error — pins the default severity path.
+		"People/Snyk/Broken Person.md": "---\nlast_met: 2026-05-06\nmeeting_count: lots\ntopics: [ai]\n---\nx\n",
 	}, "frontmatter-schema")
 	m := byRule(fs)
 	require.NotEmpty(t, m["frontmatter-schema"])
+	schemaPaths := []string{}
 	for _, f := range m["frontmatter-schema"] {
-		if f.Path == "Projects/Personal/loose.md" {
+		schemaPaths = append(schemaPaths, f.Path)
+	}
+	require.Contains(t, schemaPaths, "People/Snyk/Broken Person.md",
+		"the Error-severity path must actually be exercised")
+	for _, f := range m["frontmatter-schema"] {
+		switch f.Path {
+		case "Projects/Personal/loose.md":
 			require.Equal(t, lint.Warning, f.Severity, "project schema failures are warnings")
-		} else {
+		case "Meetings/Snyk/2026/05/06/1100 - Broken.md":
+			require.Equal(t, lint.Warning, f.Severity,
+				"meeting is in warning_types: the reference vault's history predates the schema")
+		default:
 			require.Equal(t, lint.Error, f.Severity)
 		}
 	}
@@ -270,10 +283,12 @@ func TestNamingAndPlacementRules(t *testing.T) {
 		"Meetings/Snyk/2026/5/6/1100 - Bad.md":         "x\n",
 		"Meetings/Snyk/2026/05/07/Untitled Meeting.md": "x\n",
 		"Resources/Clips/Inbox/random-clip.md":         "x\n",
-		"Resources/Personal/Session Traces/2026-07-10 - hyphen.md": "x\n",
-		"Projects/Snyk/Slack Sync 2026-05-17.md":                   "x\n",
-		"People/Snyk/backup.md.bak":                                "x\n",
-		"Action Items.md.bak":                                      "x\n",
+		"Resources/Personal/Session Traces/2026-07-10 - hyphen.md":     "x\n",
+		"Projects/Snyk/Slack Sync 2026-05-17.md":                       "x\n",
+		"People/Snyk/backup.md.bak":                                    "x\n",
+		"Action Items.md.bak":                                          "x\n",
+		"Projects.base":                                                "x\n",
+		"Projects/Snyk/Roadmap (Conflicted copy iPhone 2026-08-17).md": "x\n",
 	}, "root-canonical-only", "root-file-name-case", "top-level-folders-fixed",
 		"domain-split-folders", "meeting-path-valid-date", "meeting-filename-format",
 		"clip-processed-filename", "session-trace-filename", "no-per-run-notes", "no-junk-files")
@@ -286,6 +301,7 @@ func TestNamingAndPlacementRules(t *testing.T) {
 	require.Contains(t, rootPaths, "Rogue Root.md")
 	require.Contains(t, rootPaths, "Action Items.md.bak")
 	require.NotContains(t, rootPaths, "now.md", "case variants belong to root-file-name-case")
+	require.NotContains(t, rootPaths, "Projects.base", "Obsidian Bases file is allowlisted at root")
 
 	require.Len(t, m["root-file-name-case"], 1)
 	require.Equal(t, "now.md", m["root-file-name-case"][0].Path)
@@ -306,7 +322,14 @@ func TestNamingAndPlacementRules(t *testing.T) {
 	require.Len(t, m["session-trace-filename"], 1)
 	require.True(t, m["session-trace-filename"][0].Fixable, "hyphen form with no inbound links")
 	require.Len(t, m["no-per-run-notes"], 1)
-	require.NotEmpty(t, m["no-junk-files"])
+	junkPaths := []string{}
+	for _, f := range m["no-junk-files"] {
+		junkPaths = append(junkPaths, f.Path)
+	}
+	require.Contains(t, junkPaths, "Projects/Snyk/Roadmap (Conflicted copy iPhone 2026-08-17).md",
+		"Obsidian Sync capitalizes Conflicted; the pattern must match its real output")
+	require.Contains(t, junkPaths, "People/Snyk/backup.md.bak")
+	require.NotContains(t, junkPaths, "Projects.base", "an allowlisted root file is not junk")
 }
 
 func TestLinkRules(t *testing.T) {
