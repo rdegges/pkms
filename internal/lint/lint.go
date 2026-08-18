@@ -89,6 +89,24 @@ func RuleIDs() []string {
 	return out
 }
 
+// cfgTypeNames extracts a string list that may arrive as []string (TOML
+// decode) or []any (vault-override merge).
+func cfgTypeNames(v any) []string {
+	switch xs := v.(type) {
+	case []string:
+		return xs
+	case []any:
+		out := make([]string, 0, len(xs))
+		for _, x := range xs {
+			if s, ok := x.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // mergeCfg overlays vault-level overrides on the profile's rule config.
 func mergeCfg(base, over map[string]any) map[string]any {
 	out := map[string]any{}
@@ -129,6 +147,13 @@ func instantiate(prof *profile.Profile, overrides map[string]map[string]any, onl
 		cfg := mergeCfg(prof.LintConfig(id), overrides[id])
 		if enabled, ok := cfg["enabled"].(bool); ok && !enabled {
 			continue
+		}
+		// warning_types must name declared profile types — a typo'd type
+		// name must not silently leave severities unchanged (fail closed).
+		for _, name := range cfgTypeNames(cfg["warning_types"]) {
+			if prof.Type(name) == nil {
+				return nil, nil, fmt.Errorf("rule %s: warning_types names unknown note type %q (profile %q declares no such type)", id, name, prof.Name)
+			}
 		}
 		r, err := registry[id](cfg)
 		if err != nil {
