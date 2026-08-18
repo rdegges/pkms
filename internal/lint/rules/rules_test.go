@@ -188,9 +188,12 @@ x
 `,
 		// Project missing everything → warnings (warning_types).
 		"Projects/Personal/loose.md": "---\nstatus: active\n---\nx\n",
-		// Person with a wrong-typed field: person is NOT in warning_types,
-		// so this must stay an error — pins the default severity path.
+		// Person with a wrong-typed field: person is in warning_types
+		// (pre-schema history at scale, like meeting).
 		"People/Snyk/Broken Person.md": "---\nlast_met: 2026-05-06\nmeeting_count: lots\ntopics: [ai]\n---\nx\n",
+		// Daily-brief missing tags: NOT in warning_types, so this must
+		// stay an error — pins the default severity path.
+		"Meetings/Snyk/2026/05/06/daily-brief.md": "---\ndate: 2026-05-06\ntype: daily-brief\n---\nx\n",
 	}, "frontmatter-schema")
 	m := byRule(fs)
 	require.NotEmpty(t, m["frontmatter-schema"])
@@ -198,7 +201,7 @@ x
 	for _, f := range m["frontmatter-schema"] {
 		schemaPaths = append(schemaPaths, f.Path)
 	}
-	require.Contains(t, schemaPaths, "People/Snyk/Broken Person.md",
+	require.Contains(t, schemaPaths, "Meetings/Snyk/2026/05/06/daily-brief.md",
 		"the Error-severity path must actually be exercised")
 	for _, f := range m["frontmatter-schema"] {
 		switch f.Path {
@@ -207,6 +210,9 @@ x
 		case "Meetings/Snyk/2026/05/06/1100 - Broken.md":
 			require.Equal(t, lint.Warning, f.Severity,
 				"meeting is in warning_types: the reference vault's history predates the schema")
+		case "People/Snyk/Broken Person.md":
+			require.Equal(t, lint.Warning, f.Severity,
+				"person is in warning_types: the reference vault's history predates the schema")
 		default:
 			require.Equal(t, lint.Error, f.Severity)
 		}

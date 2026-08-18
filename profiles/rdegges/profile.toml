@@ -158,8 +158,9 @@ warning_types = ["session-trace", "raw-clip"]
 [lint.frontmatter-schema]
 # Types whose schema failures are warnings, not errors (violated at scale
 # in the reference vault; ratchet later). meeting joined the list when the
-# reference vault's history showed 386 pre-schema meeting notes.
-warning_types = ["project", "session-trace", "raw-clip", "meeting"]
+# reference vault's history showed 386 pre-schema meeting notes; person
+# followed for the same reason (279 pre-schema people notes).
+warning_types = ["project", "session-trace", "raw-clip", "meeting", "person"]
 
 [lint.meeting-tags-domain]
 # tags must contain the lowercase domain segment from the path
