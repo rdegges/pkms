@@ -188,9 +188,18 @@ x
 `,
 		// Project missing everything → warnings (warning_types).
 		"Projects/Personal/loose.md": "---\nstatus: active\n---\nx\n",
+		// Person with a wrong-typed field: person is NOT in warning_types,
+		// so this must stay an error — pins the default severity path.
+		"People/Snyk/Broken Person.md": "---\nlast_met: 2026-05-06\nmeeting_count: lots\ntopics: [ai]\n---\nx\n",
 	}, "frontmatter-schema")
 	m := byRule(fs)
 	require.NotEmpty(t, m["frontmatter-schema"])
+	schemaPaths := []string{}
+	for _, f := range m["frontmatter-schema"] {
+		schemaPaths = append(schemaPaths, f.Path)
+	}
+	require.Contains(t, schemaPaths, "People/Snyk/Broken Person.md",
+		"the Error-severity path must actually be exercised")
 	for _, f := range m["frontmatter-schema"] {
 		switch f.Path {
 		case "Projects/Personal/loose.md":
