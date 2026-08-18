@@ -157,8 +157,9 @@ warning_types = ["session-trace", "raw-clip"]
 
 [lint.frontmatter-schema]
 # Types whose schema failures are warnings, not errors (violated at scale
-# in the reference vault; ratchet later).
-warning_types = ["project", "session-trace", "raw-clip"]
+# in the reference vault; ratchet later). meeting joined the list when the
+# reference vault's history showed 386 pre-schema meeting notes.
+warning_types = ["project", "session-trace", "raw-clip", "meeting"]
 
 [lint.meeting-tags-domain]
 # tags must contain the lowercase domain segment from the path
@@ -192,7 +193,9 @@ files = [
   "Now.md", "Preferences.md", "Projects.md", "People.md", "Areas.md",
   "Action Items.md", "index.md", "log.md",
 ]
-allowlist = []
+# Projects.base is an Obsidian Bases file the reference vault keeps at root;
+# Bases files live next to the notes they query.
+allowlist = ["Projects.base"]
 
 [lint.top-level-folders-fixed]
 dirs = ["Projects", "Areas", "Resources", "Archive", "People", "Meetings"]
@@ -234,7 +237,11 @@ dir = "Drafts"
 patterns = ['^(Slack|Email) - .+ - .+\.md$']
 
 [lint.no-junk-files]
-patterns = ['*.bak', '.DS_Store', '* conflicted copy*', '~$*', '*.tmp']
+# Obsidian Sync names conflict artifacts "<name> (Conflicted copy <device>
+# <timestamp>)"; matching is case-sensitive, so the capitalized pattern is
+# required to catch them. The lowercase pattern stays for Dropbox-style
+# "conflicted copy" artifacts.
+patterns = ['*.bak', '.DS_Store', '* (Conflicted copy*', '* conflicted copy*', '~$*', '*.tmp']
 underscore_exempt = ["_template.md"]
 
 [lint.non-markdown-in-note-folders]
