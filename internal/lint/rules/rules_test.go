@@ -228,6 +228,38 @@ x
 	}
 }
 
+func TestMalformedJunkPatternFailsTheRun(t *testing.T) {
+	// A pattern path.Match cannot compile must fail the run, not silently
+	// match nothing (issue #26 — the old code discarded the error).
+	ix, prof, _ := buildVault(t, cleanVault())
+	over := map[string]map[string]any{"no-junk-files": {"patterns": []any{"[unclosed"}}}
+	_, err := lint.Run(ix, prof, over, []string{"no-junk-files"})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "[unclosed")
+
+	// A valid override still runs.
+	over = map[string]map[string]any{"no-junk-files": {"patterns": []any{"*.bak"}}}
+	_, err = lint.Run(ix, prof, over, []string{"no-junk-files"})
+	require.NoError(t, err)
+}
+
+func TestUnknownWarningTypeFailsTheRun(t *testing.T) {
+	// warning_types must name declared profile types — a typo must not
+	// silently leave severities unchanged (issue #27).
+	ix, prof, _ := buildVault(t, cleanVault())
+	for _, rule := range []string{"frontmatter-schema", "frontmatter-present"} {
+		over := map[string]map[string]any{rule: {"warning_types": []any{"meetings"}}}
+		_, err := lint.Run(ix, prof, over, []string{rule})
+		require.Error(t, err, "%s must reject an unknown type name", rule)
+		require.Contains(t, err.Error(), `"meetings"`)
+	}
+
+	// A declared type passes.
+	over := map[string]map[string]any{"frontmatter-schema": {"warning_types": []any{"meeting"}}}
+	_, err := lint.Run(ix, prof, over, []string{"frontmatter-schema"})
+	require.NoError(t, err)
+}
+
 func TestSessionTraceFrontmatterFix(t *testing.T) {
 	files := map[string]string{
 		"Resources/Personal/Session Traces/2026-07-10 — my-trace.md": "# Session trace\nno frontmatter\n",

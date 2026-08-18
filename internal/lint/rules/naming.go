@@ -2,6 +2,7 @@ package rules
 
 import (
 	"bytes"
+	"fmt"
 	"path"
 	"regexp"
 	"sort"
@@ -87,6 +88,13 @@ func init() {
 		pats := cfgStrings(cfg, "patterns")
 		if len(pats) == 0 {
 			pats = []string{"*.bak", ".DS_Store", "* conflicted copy*", "~$*", "*.tmp"}
+		}
+		// A pattern that cannot compile must fail the run, not silently
+		// match nothing (fail closed).
+		for _, p := range pats {
+			if _, err := path.Match(p, "probe"); err != nil {
+				return nil, fmt.Errorf("junk pattern %q: %w", p, err)
+			}
 		}
 		return junkFiles{patterns: pats, underscoreExempt: cfgStrings(cfg, "underscore_exempt")}, nil
 	})
