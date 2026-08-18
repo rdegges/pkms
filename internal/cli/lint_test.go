@@ -88,6 +88,44 @@ func TestLintFailOnWarning(t *testing.T) {
 	require.ErrorIs(t, err, errFindings)
 }
 
+// The point of putting a type in frontmatter-schema's warning_types is the
+// exit code: a vault full of pre-schema notes must not fail the default
+// gate. This pins that consequence for person, which joined the list
+// alongside meeting.
+func TestLintPreSchemaPersonSchemaDoesNotFailDefaultGate(t *testing.T) {
+	setupLintVault(t, map[string]string{
+		// No last_met / meeting_count / topics — the pre-schema shape.
+		"People/Snyk/Pre Schema.md": "---\nname: Jane\n---\nx\n",
+	})
+
+	out, err := runCLI(t, "lint", "--rules", "frontmatter-schema", "--json")
+	require.NoError(t, err, "person schema failures are warnings: %s", out)
+
+	var payload struct {
+		Findings []lint.Finding `json:"findings"`
+		Summary  map[string]int `json:"summary"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &payload))
+	require.NotEmpty(t, payload.Findings, "the note must still be reported, just not fatally")
+	require.Positive(t, payload.Summary["warning"])
+	require.Zero(t, payload.Summary["error"])
+
+	// Warning, not silence: --fail-on=warning still catches it, so the
+	// ratchet the profile comment promises has something to ratchet.
+	_, err = runCLI(t, "lint", "--rules", "frontmatter-schema", "--fail-on", "warning")
+	require.ErrorIs(t, err, errFindings)
+}
+
+// Severity is per-rule config: frontmatter-schema's warning_types must not
+// leak into frontmatter-present, whose own list excludes person.
+func TestLintPersonMissingFrontmatterStaysAnError(t *testing.T) {
+	setupLintVault(t, map[string]string{
+		"People/Snyk/No FM.md": "# body only\n",
+	})
+	_, err := runCLI(t, "lint", "--rules", "frontmatter-present")
+	require.ErrorIs(t, err, errFindings, "a person note with no frontmatter is still fatal")
+}
+
 func TestLintFixAppliesAndCommits(t *testing.T) {
 	vaultDir := setupLintVault(t, map[string]string{
 		"People/Snyk/Fixme.md": `---
