@@ -30,6 +30,13 @@ func buildQueryVault(t *testing.T, files map[string]string) (*vault.Index, *prof
 	return ix, prof
 }
 
+func mustQueryRun(t *testing.T, ix *vault.Index, prof *profile.Profile, opts query.Options) []query.Result {
+	t.Helper()
+	results, err := query.Run(ix, prof, opts)
+	require.NoError(t, err)
+	return results
+}
+
 func resultPaths(results []query.Result) []string {
 	paths := make([]string, len(results))
 	for i, result := range results {
@@ -47,7 +54,7 @@ func TestRunSortsResultsByAscendingPath(t *testing.T) {
 		"Folder/middle.md": "body\n",
 	})
 
-	results := query.Run(ix, prof, query.Options{})
+	results := mustQueryRun(t, ix, prof, query.Options{})
 	require.Equal(t, []string{"Folder/middle.md", "a-first.md", "z-last.md"}, resultPaths(results))
 }
 
@@ -74,12 +81,12 @@ func TestRunWhereMatchesScalarIntegerAndContainedListValues(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			results := query.Run(ix, prof, query.Options{Where: map[string]string{tt.key: tt.want}})
+			results := mustQueryRun(t, ix, prof, query.Options{Where: map[string]string{tt.key: tt.want}})
 			require.Equal(t, []string{tt.path}, resultPaths(results))
 		})
 	}
 
-	require.Empty(t, query.Run(ix, prof, query.Options{Where: map[string]string{"status": "missing"}}))
+	require.Empty(t, mustQueryRun(t, ix, prof, query.Options{Where: map[string]string{"status": "missing"}}))
 }
 
 func TestRunWhereSupportsDottedNestedKeysAndANDsPredicates(t *testing.T) {
@@ -91,7 +98,7 @@ func TestRunWhereSupportsDottedNestedKeysAndANDsPredicates(t *testing.T) {
 		"TopLevel.md": "---\na.b: value\nstatus: active\n---\nbody\n",
 	})
 
-	results := query.Run(ix, prof, query.Options{Where: map[string]string{
+	results := mustQueryRun(t, ix, prof, query.Options{Where: map[string]string{
 		"a.b":    "value",
 		"status": "active",
 	}})
@@ -107,7 +114,7 @@ func TestRunTextIsCaseInsensitiveAndSearchesBodyOnly(t *testing.T) {
 		"NoMatch.md":     "Completely unrelated.\n",
 	})
 
-	results := query.Run(ix, prof, query.Options{Text: "hAyStAcK"})
+	results := mustQueryRun(t, ix, prof, query.Options{Text: "hAyStAcK"})
 	require.Equal(t, []string{"Body.md"}, resultPaths(results))
 }
 
@@ -123,7 +130,7 @@ func TestRunBacklinksRequiresResolvedLinkToExactPath(t *testing.T) {
 		"Sources/Broken.md":           "[[Missing]]\n",
 	})
 
-	results := query.Run(ix, prof, query.Options{Backlinks: "Projects/Snyk/Target.md"})
+	results := mustQueryRun(t, ix, prof, query.Options{Backlinks: "Projects/Snyk/Target.md"})
 	require.Equal(t, []string{"Sources/AmbiguousBare.md", "Sources/Exact.md"}, resultPaths(results))
 }
 
@@ -136,7 +143,7 @@ func TestRunOrphansIgnoresSelfLinksAndCountsInboundLinksFromOtherNotes(t *testin
 		"C.md": "[[C]] and [[B]]\n",
 	})
 
-	results := query.Run(ix, prof, query.Options{Orphans: true})
+	results := mustQueryRun(t, ix, prof, query.Options{Orphans: true})
 	require.Equal(t, []string{"A.md", "C.md"}, resultPaths(results))
 }
 
@@ -152,7 +159,7 @@ func TestRunANDCombinesAllOptionPredicates(t *testing.T) {
 		"People/Snyk/WrongType.md":        "---\nstatus: active\n---\nThe needle. [[Targets/Goal]]\n",
 	})
 
-	results := query.Run(ix, prof, query.Options{
+	results := mustQueryRun(t, ix, prof, query.Options{
 		Type:      "project",
 		Where:     map[string]string{"status": "active"},
 		Text:      "needle",
@@ -192,7 +199,7 @@ func TestRunUsesRdeggesProfileTypes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.typeName, func(t *testing.T) {
-			results := query.Run(ix, prof, query.Options{Type: tt.typeName})
+			results := mustQueryRun(t, ix, prof, query.Options{Type: tt.typeName})
 			require.Equal(t, tt.want, resultPaths(results))
 		})
 	}
@@ -205,7 +212,7 @@ func TestRunResultCarriesParsedFrontmatter(t *testing.T) {
 		"Metadata.md": "---\ntitle: Example\ndate: 2026-07-15\nmeeting_count: 3\n---\nbody\n",
 	})
 
-	results := query.Run(ix, prof, query.Options{})
+	results := mustQueryRun(t, ix, prof, query.Options{})
 	require.Len(t, results, 1)
 	require.Equal(t, "Metadata.md", results[0].Path)
 	require.Equal(t, map[string]any{

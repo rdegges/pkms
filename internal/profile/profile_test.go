@@ -84,7 +84,9 @@ func TestTypeOfClassification(t *testing.T) {
 		{"Random.md", nil, ""},
 	}
 	for _, c := range cases {
-		require.Equal(t, c.want, p.TypeOf(c.path, c.fields), c.path)
+		got, err := p.TypeOf(c.path, c.fields)
+		require.NoError(t, err, c.path)
+		require.Equal(t, c.want, got, c.path)
 	}
 }
 

@@ -50,7 +50,10 @@ into nested maps). Output order is deterministic (sorted paths).`,
 				_, err = out.Write(b)
 				return err
 			}
-			results := query.Run(ix, prof, opts)
+			results, err := query.Run(ix, prof, opts)
+			if err != nil {
+				return err
+			}
 			for _, r := range results {
 				fmt.Fprintln(out, r.Path)
 			}

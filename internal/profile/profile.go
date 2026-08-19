@@ -120,22 +120,15 @@ func load(fsys fs.FS, diskPath string) (*Profile, error) {
 	if p.Name == "" {
 		return nil, fmt.Errorf("profile has no name")
 	}
-	// A malformed scope glob would silently classify nothing — TypeOf drives
-	// placement and lint severity, so it must fail load, not match nothing
-	// (fail closed; issue #30). ValidatePattern alone is not enough:
-	// doublestar re-validates a pattern SUFFIX when matching stops early,
-	// and a suffix that splits a character class holding '{' or '}' fails
-	// there — so also probe Match against a fixed corpus.
-	// FuzzLoadedScopeGlobIsMatchable keeps the corpus strict enough.
+	// A syntactically malformed scope glob fails load (issue #30). This
+	// proves the pattern is well-formed, NOT that it is match-safe:
+	// doublestar re-validates the pattern suffix wherever matching stops,
+	// so some accepted patterns still error in Match — TypeOf surfaces
+	// those at classification time instead of converting them to no-match.
 	for _, t := range p.Types {
 		for _, g := range t.Scope {
 			if !doublestar.ValidatePattern(g) {
 				return nil, fmt.Errorf("type %q: malformed scope glob %q", t.Name, g)
-			}
-			for _, probe := range globProbes {
-				if _, err := doublestar.Match(g, probe); err != nil {
-					return nil, fmt.Errorf("type %q: malformed scope glob %q: %v", t.Name, g, err)
-				}
 			}
 		}
 	}
@@ -200,10 +193,17 @@ func (p *Profile) Type(name string) *Type {
 
 // TypeOf classifies a note deterministically: first declared type whose
 // scope matches the vault-relative path and whose key trigger (if any)
-// fires. Empty string = unclassified.
-func (p *Profile) TypeOf(relPath string, fields map[string]any) string {
+// fires. Empty string = unclassified. A scope glob doublestar cannot
+// evaluate is an error, never "unclassified" — classification drives
+// placement and lint severity, so a swallowed match error would misfile
+// every note of that type in silence (issue #30).
+func (p *Profile) TypeOf(relPath string, fields map[string]any) (string, error) {
 	for _, t := range p.Types {
-		if !matchAny(t.Scope, relPath) {
+		ok, err := matchAny(t.Scope, relPath)
+		if err != nil {
+			return "", fmt.Errorf("type %q: %w", t.Name, err)
+		}
+		if !ok {
 			continue
 		}
 		if len(t.RequireAnyKey) > 0 {
@@ -218,22 +218,22 @@ func (p *Profile) TypeOf(relPath string, fields map[string]any) string {
 				continue
 			}
 		}
-		return t.Name
+		return t.Name, nil
 	}
-	return ""
+	return "", nil
 }
 
-// globProbes is a fixed corpus fed to doublestar.Match at load time; see
-// the load-time scope check above.
-var globProbes = []string{"", "a", "a/b", "a/b/c", "A"}
-
-func matchAny(globs []string, relPath string) bool {
+func matchAny(globs []string, relPath string) (bool, error) {
 	for _, g := range globs {
-		if ok, err := doublestar.Match(g, relPath); err == nil && ok {
-			return true
+		ok, err := doublestar.Match(g, relPath)
+		if err != nil {
+			return false, fmt.Errorf("scope glob %q: cannot match %q: %v", g, relPath, err)
+		}
+		if ok {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // LintConfig returns the profile's config table for a rule (may be nil).

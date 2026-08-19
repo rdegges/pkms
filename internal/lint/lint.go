@@ -32,15 +32,36 @@ type Finding struct {
 type Context struct {
 	Ix   *vault.Index
 	Prof *profile.Profile
+	err  error
 }
 
-// TypeOf classifies a note through the profile.
+// Fail records the first cannot-evaluate error; the engine aborts the run
+// with it. Rules call it when a check cannot be evaluated (a glob or type
+// scope doublestar refuses to match) — converting that into "no match"
+// would turn "cannot evaluate" into a clean report (fail closed; #30).
+func (c *Context) Fail(err error) {
+	if c.err == nil {
+		c.err = err
+	}
+}
+
+// Err returns the first recorded cannot-evaluate error.
+func (c *Context) Err() error { return c.err }
+
+// TypeOf classifies a note through the profile. A scope glob the profile
+// cannot evaluate is recorded on the context and reads as unclassified for
+// this call; the engine aborts the run before reporting anything.
 func (c *Context) TypeOf(n *vault.Note) string {
 	var fields map[string]any
 	if n.FM != nil {
 		fields = n.FM.Fields
 	}
-	return c.Prof.TypeOf(n.RelPath, fields)
+	typ, err := c.Prof.TypeOf(n.RelPath, fields)
+	if err != nil {
+		c.Fail(err)
+		return ""
+	}
+	return typ
 }
 
 // NoteRule checks one note at a time.
@@ -214,6 +235,11 @@ func Run(ix *vault.Index, prof *profile.Profile, overrides map[string]map[string
 		if vr, ok := r.(VaultRule); ok {
 			collect(id, vr.CheckVault(ctx))
 		}
+		// A rule that could not evaluate a check aborts the run: partial
+		// findings would read as a complete report (fail closed; #30).
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("rule %s: %w", id, err)
+		}
 	}
 
 	sort.Slice(findings, func(i, j int) bool {
@@ -253,7 +279,16 @@ func Fix(ix *vault.Index, prof *profile.Profile, overrides map[string]map[string
 	if n == nil {
 		return nil, nil
 	}
-	return fixer.Fix(ctx, n, f)
+	res, err := fixer.Fix(ctx, n, f)
+	if err != nil {
+		return nil, err
+	}
+	// A repair computed from a check the rule could not evaluate must not
+	// be applied (same posture as Run).
+	if cerr := ctx.Err(); cerr != nil {
+		return nil, fmt.Errorf("rule %s: %w", f.Rule, cerr)
+	}
+	return res, nil
 }
 
 func sortedKeys(m map[string]any) []string {

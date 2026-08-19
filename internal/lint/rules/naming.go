@@ -507,7 +507,7 @@ type nonMDInNotes struct{ scopes []string }
 func (r nonMDInNotes) CheckVault(ctx *lint.Context) []lint.Finding {
 	var out []lint.Finding
 	for _, f := range sortedFiles(ctx) {
-		if strings.HasSuffix(f, ".md") || !matchAnyGlob(r.scopes, f) {
+		if strings.HasSuffix(f, ".md") || !matchAnyGlob(ctx, r.scopes, f) {
 			continue
 		}
 		out = append(out, finding(lint.Warning, f, 0, false,

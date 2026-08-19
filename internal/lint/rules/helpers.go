@@ -59,24 +59,16 @@ func cfgRegexps(cfg map[string]any, key string) ([]*regexp.Regexp, error) {
 	return out, nil
 }
 
-// globProbes is a fixed corpus fed to doublestar.Match at construction time.
-// ValidatePattern alone is not enough: doublestar re-validates a pattern
-// SUFFIX when matching stops early, and a suffix that splits a character
-// class holding '{' or '}' fails there (e.g. "{[}]}", "[!a{b]"). The corpus
-// is a heuristic; FuzzAcceptedScopeGlobIsMatchable keeps it strict enough.
-var globProbes = []string{"", "a", "a/b", "a/b/c", "A"}
-
-// validGlobs rejects malformed doublestar patterns at construction time so
-// a bad scope can never silently match nothing at check time (issue #30).
+// validGlobs rejects syntactically invalid doublestar patterns at
+// construction time (issue #30). This proves the pattern is well-formed,
+// NOT that it is match-safe: doublestar re-validates the pattern suffix
+// wherever matching stops, so some accepted patterns still error in Match —
+// matchAnyGlob surfaces those at check time instead of converting them to
+// no-match.
 func validGlobs(key string, globs []string) error {
 	for _, g := range globs {
 		if !doublestar.ValidatePattern(g) {
 			return fmt.Errorf("%s: malformed glob %q", key, g)
-		}
-		for _, probe := range globProbes {
-			if _, err := doublestar.Match(g, probe); err != nil {
-				return fmt.Errorf("%s: malformed glob %q: %v", key, g, err)
-			}
 		}
 	}
 	return nil
@@ -91,9 +83,18 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-func matchAnyGlob(globs []string, rel string) bool {
+// matchAnyGlob reports whether rel matches any glob. A pattern doublestar
+// cannot evaluate is recorded on ctx and reads as no-match for this call;
+// the engine aborts the run with it (config-error posture, exit 2) —
+// never a silently narrowed report (issue #30).
+func matchAnyGlob(ctx *lint.Context, globs []string, rel string) bool {
 	for _, g := range globs {
-		if ok, err := doublestar.Match(g, rel); err == nil && ok {
+		ok, err := doublestar.Match(g, rel)
+		if err != nil {
+			ctx.Fail(fmt.Errorf("glob %q: cannot match %q: %v", g, rel, err))
+			return false
+		}
+		if ok {
 			return true
 		}
 	}

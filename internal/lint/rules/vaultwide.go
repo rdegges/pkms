@@ -178,7 +178,7 @@ func (r countDrift) actual(ctx *lint.Context) int {
 	case "files":
 		count := 0
 		for _, p := range ctx.Ix.NotePaths() {
-			if p != r.file && matchAnyGlob([]string{r.glob}, p) {
+			if p != r.file && matchAnyGlob(ctx, []string{r.glob}, p) {
 				count++
 			}
 		}
@@ -220,7 +220,7 @@ type indexComplete struct {
 func (r indexComplete) CheckVault(ctx *lint.Context) []lint.Finding {
 	var inScope []string
 	for _, p := range ctx.Ix.NotePaths() {
-		if p != r.file && matchAnyGlob([]string{r.lists}, p) {
+		if p != r.file && matchAnyGlob(ctx, []string{r.lists}, p) {
 			inScope = append(inScope, p)
 		}
 	}

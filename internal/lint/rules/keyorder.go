@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/rdegges/pkms/internal/lint"
 	"github.com/rdegges/pkms/internal/vault"
@@ -30,7 +31,13 @@ func init() {
 			return nil, nil
 		}
 		orders := map[string][]string{}
+		types := make([]string, 0, len(table))
 		for typ := range table {
+			types = append(types, typ)
+		}
+		// Sorted so a config error names the same type on every run.
+		sort.Strings(types)
+		for _, typ := range types {
 			ss, err := lint.CfgStrings(table, typ)
 			if err != nil {
 				return nil, fmt.Errorf("orders.%w", err)

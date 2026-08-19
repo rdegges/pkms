@@ -28,11 +28,13 @@ Conventions:
   compile (junk-file patterns, scope/lists/counts globs), a `warning_types`
   entry that names no declared note type, or a list-valued option written as
   a bare scalar or containing a non-string entry, stops `pkms lint` with
-  exit 2 before any findings are reported or fixes applied. `--fix`
-  validates through the same path. Config validation runs only for the
-  rules a run instantiates: rules disabled with `enabled = false`, or
-  excluded by `--rules`, are not validated. Profile type-scope globs are
-  validated when the profile loads.
+  exit 2 before any findings are reported or fixes applied. A glob the
+  matcher refuses to evaluate at match time also stops the run — never
+  reads as "matches nothing". `--fix` validates through the same path.
+  Config validation runs only for the rules a run instantiates: rules
+  disabled with `enabled = false`, or excluded by `--rules`, are not
+  validated. Profile type-scope globs are syntax-checked when the profile
+  loads; a match-time evaluation error surfaces from classification.
 
 ---
 

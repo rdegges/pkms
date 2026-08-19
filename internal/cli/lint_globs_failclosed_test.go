@@ -115,6 +115,34 @@ func TestMCPLintMalformedGlobIsAToolError(t *testing.T) {
 	require.NotContains(t, got, `"findings"`, "no payload may be returned: %s", got)
 }
 
+// GAP: this change validates a vault's lint config only when `pkms lint`
+// instantiates a rule. `pkms doctor` — the command a user runs to ask "is my
+// setup healthy?" — never does, so it reports zero failures for a config
+// that makes `pkms lint` refuse to run with exit 2. The asymmetry is inside
+// this change: the doctor subtest above proves doctor DOES fail a malformed
+// profile glob, so the two config sources are now treated differently.
+//
+// Pins CURRENT behavior. When doctor learns to validate vault lint config,
+// this test fails — that failure is the fix, and the test should be
+// inverted, not deleted.
+func TestKnownGap_DoctorReportsCleanWhenTheVaultsLintConfigIsBroken(t *testing.T) {
+	setupLintVault(t, map[string]string{"Areas/Personal/note.md": "x\n"})
+	appendVaultLintOverride(t, os.Getenv("PKMS_CONFIG"),
+		"non-markdown-in-note-folders", `scopes = ["[unclosed"]`)
+
+	// Premise: lint refuses to run at all with this config.
+	_, err := runCLI(t, "lint")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errFindings)
+
+	out, err := runCLI(t, "doctor")
+	require.NoError(t, err, "GAP: doctor does not notice the broken lint config: %s", out)
+	require.Contains(t, out, "0 failures",
+		"GAP: doctor certifies a vault whose linter cannot run: %s", out)
+	require.NotContains(t, out, "[unclosed",
+		"GAP: the offending pattern is never surfaced by doctor: %s", out)
+}
+
 // ---- custom profiles on disk ---------------------------------------------
 
 // Profile type scopes are now validated at load, which is the gate for every

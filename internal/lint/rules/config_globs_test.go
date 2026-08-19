@@ -10,28 +10,18 @@ import (
 	"github.com/rdegges/pkms/internal/lint"
 )
 
-// The #30 fix makes validGlobs the sole gate in front of matchAnyGlob, which
-// now drops doublestar's error entirely. These tests hold that gate to the
-// two things it must be: complete (nothing it accepts can error at match
-// time) and non-destructive (it accepts every glob shape real config uses,
-// and those globs still match).
+// The #30 fix keeps validGlobs as a syntax-only gate (ValidatePattern) and
+// makes matchAnyGlob surface doublestar's match-time error through the
+// engine. These tests hold that pair to the real invariant: a match-time
+// glob error always fails the run — never converted to no-match — and every
+// glob shape real config uses keeps working.
 
-// globNames is the corpus of vault-relative paths a scope glob is matched
-// against at check time — real shapes plus hostile ones.
-var globNames = []string{
-	"", "Now.md", "Areas/Personal/x.md", "Areas/Personal/Sub/deep.md",
-	"Meetings/Snyk/2026/05/06/1100 - Weekly Sync.md",
-	"Resources/Personal/Recipes/Café au Lait.md",
-	"Projects/Snyk/a.md", "attachments/img.png", "a/b/c/d/e/f/g",
-	"[brackets].md", "back\\slash.md", "{braces}.md", "\x00", "a\nb.md",
-	"конспект.md", "x", "/", "//", "./x", "../x",
-}
-
-// The invariant behind matchAnyGlob's dropped error: any pattern the rule
-// factories accept must be safe to feed to doublestar.Match at check time,
-// for every path. A divergence here means the pattern silently matches
-// nothing in production — the exact bug #30 set out to fix, reopened.
-func FuzzAcceptedScopeGlobIsMatchable(f *testing.F) {
+// The invariant behind the design: whenever doublestar.Match errors on a
+// file the rule feeds it, the run must error. The construction gate proves
+// syntax only (doublestar re-validates the pattern SUFFIX where matching
+// stops, so some syntactically valid patterns still error), which makes the
+// match-time path the load-bearing one.
+func FuzzScopeGlobMatchErrorFailsTheRun(f *testing.F) {
 	for _, seed := range []string{
 		"Areas/**", "**/*.md", "Resources/{Snyk,Personal}/*.md",
 		"Meetings/*/[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]/*.md",
@@ -39,65 +29,112 @@ func FuzzAcceptedScopeGlobIsMatchable(f *testing.F) {
 		"{}", "{,}", "[z-a]", "[--]", "[a-]", "[[]", "[]]", `a\`, `\`,
 		"**", "a**b", "*", "?", "[^]a]", "{a/b,c}", "café*", "\x00",
 		"{{}}", "{a,b}{c,d}", "[\\]", "**/**/**",
-		// Known divergences this fuzzer found: doublestar validates a
-		// pattern as a whole, but when matching stops early it re-validates
-		// the pattern SUFFIX from that point — and a suffix that splits a
-		// character class holding '{' or '}' does not validate.
+		// Known ValidatePattern/Match divergences: a suffix that splits a
+		// character class holding '{' or '}' does not re-validate.
 		"{[}]}", "[!a{b]", "[!00A{000]",
+		"Areas/Personal/junk.txt{[,],}",
 	} {
 		f.Add(seed)
 	}
+	// The rule skips .md files before matching, so the only path it feeds
+	// to doublestar.Match is the .txt file.
+	const junk = "Areas/Personal/junk.txt"
 	ix, prof := buildVaultWith(f, "rdegges", map[string]string{
-		"Areas/Personal/n.md":  "x\n",
-		"Areas/Personal/j.txt": "x\n",
+		"Areas/Personal/n.md": "x\n",
+		junk:                  "x\n",
 	})
 
 	f.Fuzz(func(t *testing.T, pattern string) {
 		over := map[string]map[string]any{
 			"non-markdown-in-note-folders": {"scopes": []any{pattern}},
 		}
-		if _, err := lint.Run(ix, prof, over, []string{"non-markdown-in-note-folders"}); err != nil {
-			return // rejected up front: fail-closed, nothing left to prove
-		}
-		for _, n := range globNames {
-			if _, err := doublestar.Match(pattern, n); err != nil {
-				t.Fatalf("glob %q was accepted but doublestar.Match(%q, %q) fails: %v — "+
-					"matchAnyGlob drops that error, so the scope silently matches nothing",
-					pattern, pattern, n, err)
+		_, runErr := lint.Run(ix, prof, over, []string{"non-markdown-in-note-folders"})
+		if _, matchErr := doublestar.Match(pattern, junk); matchErr != nil {
+			if runErr == nil {
+				t.Fatalf("glob %q errors matching %q (%v) but the run reported clean — "+
+					"the match error was converted to no-match", pattern, junk, matchErr)
 			}
 		}
 	})
 }
 
-// The concrete, minimal statement of the same defect the fuzzer found, at
-// the rule-config layer. validGlobs uses doublestar.ValidatePattern, but
-// doublestar.Match re-validates the pattern SUFFIX where matching stopped,
-// and a suffix that splits a character class holding '{' or '}' is not
-// valid. So Match errors on a pattern validGlobs accepted — and matchAnyGlob
-// now discards that error, which is the silent "matches nothing" #30 closed.
-func TestValidatedGlobMustNotErrorAtMatchTime(t *testing.T) {
-	ix, prof, _ := buildVault(t, cleanVault())
-	// Each entry: a glob validGlobs accepts, and a path Match refuses it on.
-	for glob, victim := range map[string]string{
-		"{[}]}":      "x",
-		"[!a{b]":     "a/b",
-		"[!00A{000]": "Areas/Personal/x.md",
-	} {
-		t.Run(glob, func(t *testing.T) {
-			require.True(t, doublestar.ValidatePattern(glob),
-				"premise: the construction-time check accepts this pattern")
-			_, matchErr := doublestar.Match(glob, victim)
-			require.Errorf(t, matchErr,
-				"premise: doublestar refuses %q while matching %q", glob, victim)
+// The concrete, minimal statement of the invariant: globs doublestar
+// validates as a whole but refuses to match (it re-validates the pattern
+// SUFFIX where matching stops) pass construction, so the error must surface
+// from the run itself — config-error posture, not a narrowed clean report.
+func TestGlobMatchErrorFailsTheRun(t *testing.T) {
+	// "{[}]}" errors in Match for every name.
+	const glob = "{[}]}"
+	require.True(t, doublestar.ValidatePattern(glob),
+		"premise: the construction-time check accepts this pattern")
+	_, matchErr := doublestar.Match(glob, "Areas/Personal/junk.txt")
+	require.Error(t, matchErr, "premise: doublestar refuses the pattern while matching")
 
-			_, err := lint.Run(ix, prof,
-				map[string]map[string]any{"orphan-notes": {"scopes": []any{glob}}},
-				[]string{"orphan-notes"})
-			require.Error(t, err,
-				"a glob doublestar refuses to match must fail the run; accepting it "+
-					"means the scope silently matches nothing at check time")
-		})
+	ix, prof := buildVaultWith(t, "rdegges", map[string]string{
+		"Areas/Personal/note.md":  "x\n",
+		"Areas/Personal/junk.txt": "x\n",
+	})
+	_, err := lint.Run(ix, prof,
+		map[string]map[string]any{"non-markdown-in-note-folders": {"scopes": []any{glob}}},
+		[]string{"non-markdown-in-note-folders"})
+	require.Error(t, err,
+		"a match-time glob error must fail the run, never read as no-match")
+	require.Contains(t, err.Error(), glob, "the error must name the offending pattern")
+	require.Contains(t, err.Error(), "non-markdown-in-note-folders",
+		"the error must name the rule")
+}
+
+// DEFECT PROOF (#30 is not closed). The construction gate is
+// ValidatePattern plus a five-path probe corpus ("", "a", "a/b", "a/b/c",
+// "A"), and doublestar re-validates the pattern SUFFIX at whatever position
+// matching stops — a position the five probes rarely reach. So globs the
+// gate accepts still error at check time, matchAnyGlob still drops the
+// error, and the scope still silently matches nothing.
+//
+// Evidence: FuzzAcceptedScopeGlobIsMatchable above finds a counterexample in
+// under a second of real fuzzing (`go test -fuzz` on this package), and its
+// minimised input is pinned in testdata/fuzz. A brute-force sweep of all
+// patterns up to length 6 over the alphabet `a/[]{}!-\*,A` found 613 globs
+// the gate accepts that error on a realistic vault path.
+//
+// The assertion below is deliberately fix-agnostic: rejecting the glob at
+// construction and surfacing the match-time error are both valid repairs, so
+// this only requires that ONE of them happens.
+func TestAcceptedGlobMustNotSilentlyExcludeTheFileItNames(t *testing.T) {
+	const junk = "Areas/Personal/junk.txt"
+	// The literal path plus "{[,],}" — an alternation of "one comma" or
+	// "nothing", so the pattern still designates exactly that one file.
+	const glob = junk + "{[,],}"
+
+	require.True(t, doublestar.ValidatePattern(glob),
+		"premise: the gate's first check accepts this pattern")
+	require.True(t, doublestar.MatchUnvalidated(glob, junk),
+		"premise: the pattern does designate %q", junk)
+	_, matchErr := doublestar.Match(glob, junk)
+	require.Errorf(t, matchErr,
+		"premise: Match refuses %q while matching %q", glob, junk)
+
+	ix, prof := buildVaultWith(t, "rdegges", map[string]string{
+		"Areas/Personal/note.md": "x\n",
+		junk:                     "x\n",
+	})
+	// A plain literal scope finds the file, so the fixture is not simply
+	// free of violations.
+	fs, err := lint.Run(ix, prof,
+		map[string]map[string]any{"non-markdown-in-note-folders": {"scopes": []any{junk}}},
+		[]string{"non-markdown-in-note-folders"})
+	require.NoError(t, err)
+	require.Lenf(t, fs, 1, "premise: %q is a finding under a literal scope: %+v", junk, fs)
+
+	fs, err = lint.Run(ix, prof,
+		map[string]map[string]any{"non-markdown-in-note-folders": {"scopes": []any{glob}}},
+		[]string{"non-markdown-in-note-folders"})
+	if err != nil {
+		return // rejected at construction: fail-closed, nothing left to prove
 	}
+	require.Lenf(t, fs, 1,
+		"the run accepted the glob, so the scope must still select the file it names; "+
+			"matchAnyGlob drops doublestar's error instead and the rule reports clean: %+v", fs)
 }
 
 // A fail-closed check that rejects good config is worse than the bug it

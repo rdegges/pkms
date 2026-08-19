@@ -428,7 +428,7 @@ type orphanNotes struct{ scopes []string }
 func (r orphanNotes) CheckVault(ctx *lint.Context) []lint.Finding {
 	var out []lint.Finding
 	for _, p := range ctx.Ix.NotePaths() {
-		if !matchAnyGlob(r.scopes, p) {
+		if !matchAnyGlob(ctx, r.scopes, p) {
 			continue
 		}
 		inbound := 0

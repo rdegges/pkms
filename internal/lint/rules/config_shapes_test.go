@@ -240,6 +240,52 @@ func TestKeyOrderConfigShapesFailTheRun(t *testing.T) {
 	}
 }
 
+// The `orders` rewrite is only ever driven from Go maps by the tests above,
+// and the shipped profile keeps the rule off — so nothing proved the strict
+// reader still accepts what a real profile.toml decodes to. It must enforce
+// the order it was given, and its two "unconfigured" exits (no `orders` key,
+// empty table) must stay inert rather than become config errors.
+func TestKeyOrderReadsARealProfileTOMLOrdersTable(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "Notes"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "Notes", "A.md"),
+		[]byte("---\nmeeting_count: 1\nlast_met: 2026-01-02\n---\nx\n"), 0o644))
+	ix, err := vault.BuildIndex(root, vault.WalkOptions{})
+	require.NoError(t, err)
+
+	load := func(t *testing.T, lintCfg string) *profile.Profile {
+		t.Helper()
+		dir := t.TempDir()
+		manifest := "schema_version = 1\nname = \"ko\"\nscaffold = [\"Notes\"]\n\n" +
+			"[[types]]\nname = \"note\"\nscope = [\"Notes/**\"]\n\n" + lintCfg
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "profile.toml"), []byte(manifest), 0o644))
+		p, err := profile.Load(dir)
+		require.NoError(t, err)
+		return p
+	}
+
+	configured := load(t, "[lint.frontmatter-key-order]\nenabled = true\n\n"+
+		"[lint.frontmatter-key-order.orders]\nnote = [\"last_met\", \"meeting_count\"]\n")
+	fs, err := lint.Run(ix, configured, nil, []string{"frontmatter-key-order"})
+	require.NoError(t, err, "a TOML orders table must decode to a shape the strict reader accepts")
+	require.Len(t, fs, 1, "the configured order must actually be enforced: %+v", fs)
+	require.Contains(t, fs[0].Message, "out of template order")
+
+	for label, cfg := range map[string]string{
+		"no orders key": "[lint.frontmatter-key-order]\nenabled = true\n",
+		"empty orders table": "[lint.frontmatter-key-order]\nenabled = true\n\n" +
+			"[lint.frontmatter-key-order.orders]\n",
+		"empty per-type list": "[lint.frontmatter-key-order]\nenabled = true\n\n" +
+			"[lint.frontmatter-key-order.orders]\nnote = []\n",
+	} {
+		t.Run(label, func(t *testing.T) {
+			fs, err := lint.Run(ix, load(t, cfg), nil, []string{"frontmatter-key-order"})
+			require.NoError(t, err, "%s is unconfigured, not malformed", label)
+			require.Empty(t, fs, "%s must leave the rule inert: %+v", label, fs)
+		})
+	}
+}
+
 // GAP: an unrecognized `severity` override is dropped without a word, so a
 // user who asks to promote a warning to an error silently keeps the warning.
 // This is the same silent-severity failure #29 closed for warning_types.
