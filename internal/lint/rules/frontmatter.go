@@ -18,7 +18,11 @@ func init() {
 		return fileTooLarge{}, nil
 	})
 	lint.Register("frontmatter-present", func(cfg map[string]any) (any, error) {
-		return fmPresent{warningTypes: cfgStrings(cfg, "warning_types")}, nil
+		warn, err := lint.CfgStrings(cfg, "warning_types")
+		if err != nil {
+			return nil, err
+		}
+		return fmPresent{warningTypes: warn}, nil
 	})
 	lint.Register("frontmatter-closed", func(cfg map[string]any) (any, error) {
 		return fmClosed{}, nil
@@ -30,7 +34,10 @@ func init() {
 		return fmNoTabs{}, nil
 	})
 	lint.Register("date-format-iso", func(cfg map[string]any) (any, error) {
-		keys := cfgStrings(cfg, "keys")
+		keys, err := lint.CfgStrings(cfg, "keys")
+		if err != nil {
+			return nil, err
+		}
 		if len(keys) == 0 {
 			keys = []string{"date", "created", "updated", "last_updated", "published"}
 		}

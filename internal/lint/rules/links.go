@@ -39,7 +39,10 @@ func init() {
 		}, nil
 	})
 	lint.Register("related-projects-resolve", func(cfg map[string]any) (any, error) {
-		folders := cfgStrings(cfg, "folders")
+		folders, err := lint.CfgStrings(cfg, "folders")
+		if err != nil {
+			return nil, err
+		}
 		if len(folders) == 0 {
 			folders = []string{"Projects/", "Archive/"}
 		}
@@ -49,9 +52,15 @@ func init() {
 		return meetingHistoryLinks{}, nil
 	})
 	lint.Register("orphan-notes", func(cfg map[string]any) (any, error) {
-		scopes := cfgStrings(cfg, "scopes")
+		scopes, err := lint.CfgStrings(cfg, "scopes")
+		if err != nil {
+			return nil, err
+		}
 		if len(scopes) == 0 {
 			return nil, nil
+		}
+		if err := validGlobs("scopes", scopes); err != nil {
+			return nil, err
 		}
 		return orphanNotes{scopes: scopes}, nil
 	})

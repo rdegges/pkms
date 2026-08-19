@@ -120,6 +120,16 @@ func load(fsys fs.FS, diskPath string) (*Profile, error) {
 	if p.Name == "" {
 		return nil, fmt.Errorf("profile has no name")
 	}
+	// A malformed scope glob would silently classify nothing — TypeOf drives
+	// placement and lint severity, so it must fail load, not match nothing
+	// (fail closed; issue #30).
+	for _, t := range p.Types {
+		for _, g := range t.Scope {
+			if !doublestar.ValidatePattern(g) {
+				return nil, fmt.Errorf("type %q: malformed scope glob %q", t.Name, g)
+			}
+		}
+	}
 	if err := p.compileSchemas(); err != nil {
 		return nil, err
 	}
@@ -204,9 +214,11 @@ func (p *Profile) TypeOf(relPath string, fields map[string]any) string {
 	return ""
 }
 
+// matchAny assumes its globs were vetted at profile load, so
+// doublestar.Match cannot error here.
 func matchAny(globs []string, relPath string) bool {
 	for _, g := range globs {
-		if ok, err := doublestar.Match(g, relPath); err == nil && ok {
+		if ok, _ := doublestar.Match(g, relPath); ok {
 			return true
 		}
 	}

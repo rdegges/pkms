@@ -43,26 +43,13 @@ func cfgBool(cfg map[string]any, key string, def bool) bool {
 	return def
 }
 
-func cfgStrings(cfg map[string]any, key string) []string {
-	raw, ok := cfg[key].([]any)
-	if !ok {
-		if s, ok := cfg[key].([]string); ok {
-			return s
-		}
-		return nil
-	}
-	out := make([]string, 0, len(raw))
-	for _, e := range raw {
-		if s, ok := e.(string); ok {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
 func cfgRegexps(cfg map[string]any, key string) ([]*regexp.Regexp, error) {
+	pats, err := lint.CfgStrings(cfg, key)
+	if err != nil {
+		return nil, err
+	}
 	var out []*regexp.Regexp
-	for _, p := range cfgStrings(cfg, key) {
+	for _, p := range pats {
 		re, err := regexp.Compile(p)
 		if err != nil {
 			return nil, fmt.Errorf("pattern %q: %w", p, err)
@@ -70,6 +57,17 @@ func cfgRegexps(cfg map[string]any, key string) ([]*regexp.Regexp, error) {
 		out = append(out, re)
 	}
 	return out, nil
+}
+
+// validGlobs rejects malformed doublestar patterns at construction time so
+// a bad scope can never silently match nothing at check time (issue #30).
+func validGlobs(key string, globs []string) error {
+	for _, g := range globs {
+		if !doublestar.ValidatePattern(g) {
+			return fmt.Errorf("%s: malformed glob %q", key, g)
+		}
+	}
+	return nil
 }
 
 func contains(list []string, s string) bool {
@@ -81,9 +79,11 @@ func contains(list []string, s string) bool {
 	return false
 }
 
+// matchAnyGlob assumes its globs were vetted by validGlobs at rule
+// construction, so doublestar.Match cannot error here.
 func matchAnyGlob(globs []string, rel string) bool {
 	for _, g := range globs {
-		if ok, err := doublestar.Match(g, rel); err == nil && ok {
+		if ok, _ := doublestar.Match(g, rel); ok {
 			return true
 		}
 	}

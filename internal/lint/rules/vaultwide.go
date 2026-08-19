@@ -24,6 +24,9 @@ func init() {
 		if file == "" || counts == "" {
 			return nil, nil
 		}
+		if err := validGlobs("counts", []string{counts}); err != nil {
+			return nil, err
+		}
 		return countDrift{file: file, key: cfgString(cfg, "key", "recipe_count"), mode: "files", glob: counts}, nil
 	})
 	lint.Register("recipes-index-links-complete", func(cfg map[string]any) (any, error) {
@@ -31,6 +34,9 @@ func init() {
 		lists := cfgString(cfg, "lists", "")
 		if file == "" || lists == "" {
 			return nil, nil
+		}
+		if err := validGlobs("lists", []string{lists}); err != nil {
+			return nil, err
 		}
 		return indexComplete{file: file, lists: lists, sev: lint.Error, reverse: true}, nil
 	})
@@ -40,6 +46,9 @@ func init() {
 		if file == "" || lists == "" {
 			return nil, nil
 		}
+		if err := validGlobs("lists", []string{lists}); err != nil {
+			return nil, err
+		}
 		return indexComplete{file: file, lists: lists, sev: lint.Warning}, nil
 	})
 	lint.Register("projects-linked-from-master", func(cfg map[string]any) (any, error) {
@@ -48,11 +57,17 @@ func init() {
 		if file == "" || lists == "" {
 			return nil, nil
 		}
+		if err := validGlobs("lists", []string{lists}); err != nil {
+			return nil, err
+		}
 		return indexComplete{file: file, lists: lists, sev: lint.Warning}, nil
 	})
 	lint.Register("index-no-inventory", func(cfg map[string]any) (any, error) {
 		file := cfgString(cfg, "file", "")
-		prefixes := cfgStrings(cfg, "forbidden_prefixes")
+		prefixes, err := lint.CfgStrings(cfg, "forbidden_prefixes")
+		if err != nil {
+			return nil, err
+		}
 		if file == "" || len(prefixes) == 0 {
 			return nil, nil
 		}
@@ -67,7 +82,10 @@ func init() {
 	})
 	lint.Register("log-action-vocab", func(cfg map[string]any) (any, error) {
 		file := cfgString(cfg, "file", "")
-		allow := cfgStrings(cfg, "allowlist")
+		allow, err := lint.CfgStrings(cfg, "allowlist")
+		if err != nil {
+			return nil, err
+		}
 		if file == "" || len(allow) == 0 {
 			return nil, nil
 		}
@@ -95,7 +113,10 @@ func init() {
 	})
 	lint.Register("now-fixed-sections", func(cfg map[string]any) (any, error) {
 		file := cfgString(cfg, "file", "")
-		sections := cfgStrings(cfg, "sections")
+		sections, err := lint.CfgStrings(cfg, "sections")
+		if err != nil {
+			return nil, err
+		}
 		if file == "" || len(sections) == 0 {
 			return nil, nil
 		}

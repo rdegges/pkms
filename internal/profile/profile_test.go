@@ -22,6 +22,40 @@ func TestLoadUnknown(t *testing.T) {
 	require.ErrorContains(t, err, "not a built-in")
 }
 
+// A malformed scope glob must fail profile load, not silently classify
+// nothing: TypeOf drives placement and lint severity, so a broken scope
+// would misfile every note of that type without a word (issue #30).
+func TestLoadRejectsMalformedScopeGlob(t *testing.T) {
+	dir := t.TempDir()
+	manifest := `schema_version = 1
+name = "broken"
+scaffold = ["Notes"]
+
+[[types]]
+name = "note"
+scope = ["Notes/**", "[unclosed"]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "profile.toml"), []byte(manifest), 0o644))
+	_, err := Load(dir)
+	require.Error(t, err, "a malformed type scope glob must fail load")
+	require.ErrorContains(t, err, "[unclosed", "the error must name the offending pattern")
+	require.ErrorContains(t, err, "note", "the error must name the type")
+
+	// The same manifest with the bad pattern removed loads fine — proving
+	// the rejection above is the glob check, not some other decode error.
+	good := `schema_version = 1
+name = "ok"
+scaffold = ["Notes"]
+
+[[types]]
+name = "note"
+scope = ["Notes/**"]
+`
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "profile.toml"), []byte(good), 0o644))
+	_, err = Load(dir)
+	require.NoError(t, err)
+}
+
 func TestTypeOfClassification(t *testing.T) {
 	p, err := Load("rdegges")
 	require.NoError(t, err)

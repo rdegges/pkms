@@ -89,22 +89,32 @@ func RuleIDs() []string {
 	return out
 }
 
-// cfgTypeNames extracts a string list that may arrive as []string (TOML
-// decode) or []any (vault-override merge).
-func cfgTypeNames(v any) []string {
-	switch xs := v.(type) {
+// CfgStrings reads a list-of-strings config value, which may arrive as
+// []string (TOML decode) or []any (vault-override merge). An absent key is
+// nil. A value that is present but cannot be honored — a bare scalar, or a
+// list with a non-string entry — is a config error, never silently dropped:
+// dropping it would disable rules and severity downgrades without a word
+// (fail closed; the SPEC §31.7 rejectScalarHookCmds precedent).
+func CfgStrings(cfg map[string]any, key string) ([]string, error) {
+	raw, ok := cfg[key]
+	if !ok {
+		return nil, nil
+	}
+	switch xs := raw.(type) {
 	case []string:
-		return xs
+		return xs, nil
 	case []any:
 		out := make([]string, 0, len(xs))
-		for _, x := range xs {
-			if s, ok := x.(string); ok {
-				out = append(out, s)
+		for i, e := range xs {
+			s, ok := e.(string)
+			if !ok {
+				return nil, fmt.Errorf("%s[%d]: got %T (%v), want string", key, i, e, e)
 			}
+			out = append(out, s)
 		}
-		return out
+		return out, nil
 	}
-	return nil
+	return nil, fmt.Errorf("%s: got %T, want a list of strings", key, raw)
 }
 
 // mergeCfg overlays vault-level overrides on the profile's rule config.
@@ -149,8 +159,13 @@ func instantiate(prof *profile.Profile, overrides map[string]map[string]any, onl
 			continue
 		}
 		// warning_types must name declared profile types — a typo'd type
-		// name must not silently leave severities unchanged (fail closed).
-		for _, name := range cfgTypeNames(cfg["warning_types"]) {
+		// name or a wrong-shaped value must not silently leave severities
+		// unchanged (fail closed).
+		names, err := CfgStrings(cfg, "warning_types")
+		if err != nil {
+			return nil, nil, fmt.Errorf("rule %s: %w", id, err)
+		}
+		for _, name := range names {
 			if prof.Type(name) == nil {
 				return nil, nil, fmt.Errorf("rule %s: warning_types names unknown note type %q (profile %q declares no such type)", id, name, prof.Name)
 			}
@@ -217,17 +232,18 @@ func Run(ix *vault.Index, prof *profile.Profile, overrides map[string]map[string
 	return findings, nil
 }
 
-// Fix computes the repair for one fixable finding.
+// Fix computes the repair for one fixable finding. It instantiates the rule
+// through the same validation path as Run — a config Run would reject must
+// be rejected here too, or --fix becomes a validation bypass.
 func Fix(ix *vault.Index, prof *profile.Profile, overrides map[string]map[string]any, f Finding) (*FixResult, error) {
 	ctx := &Context{Ix: ix, Prof: prof}
-	cfg := mergeCfg(prof.LintConfig(f.Rule), overrides[f.Rule])
-	factory, ok := registry[f.Rule]
-	if !ok {
-		return nil, fmt.Errorf("unknown rule %s", f.Rule)
-	}
-	r, err := factory(cfg)
-	if err != nil || r == nil {
+	rules, _, err := instantiate(prof, overrides, []string{f.Rule})
+	if err != nil {
 		return nil, err
+	}
+	r, ok := rules[f.Rule]
+	if !ok {
+		return nil, nil // disabled or not applicable with this config
 	}
 	fixer, ok := r.(Fixer)
 	if !ok {

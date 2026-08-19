@@ -24,12 +24,15 @@ Conventions:
 - **Note-type detection is deterministic by path** (see the type map at the
   end), with one content trigger (clip-summary).
 - `HHMM` in filename regexes = `([01][0-9]|2[0-3])[0-5][0-9]`.
-- **Malformed config fails the run.** A junk-file pattern that `path.Match`
-  cannot compile, or a `warning_types` entry that names no declared note
-  type, stops `pkms lint` with exit 2 before any findings are reported or
-  fixes applied. Config validation runs only for the rules a run
-  instantiates: rules disabled with `enabled = false`, or excluded by
-  `--rules`, are not validated.
+- **Malformed config fails the run.** A glob or regex pattern that cannot
+  compile (junk-file patterns, scope/lists/counts globs), a `warning_types`
+  entry that names no declared note type, or a list-valued option written as
+  a bare scalar or containing a non-string entry, stops `pkms lint` with
+  exit 2 before any findings are reported or fixes applied. `--fix`
+  validates through the same path. Config validation runs only for the
+  rules a run instantiates: rules disabled with `enabled = false`, or
+  excluded by `--rules`, are not validated. Profile type-scope globs are
+  validated when the profile loads.
 
 ---
 
