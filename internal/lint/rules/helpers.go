@@ -59,12 +59,24 @@ func cfgRegexps(cfg map[string]any, key string) ([]*regexp.Regexp, error) {
 	return out, nil
 }
 
+// globProbes is a fixed corpus fed to doublestar.Match at construction time.
+// ValidatePattern alone is not enough: doublestar re-validates a pattern
+// SUFFIX when matching stops early, and a suffix that splits a character
+// class holding '{' or '}' fails there (e.g. "{[}]}", "[!a{b]"). The corpus
+// is a heuristic; FuzzAcceptedScopeGlobIsMatchable keeps it strict enough.
+var globProbes = []string{"", "a", "a/b", "a/b/c", "A"}
+
 // validGlobs rejects malformed doublestar patterns at construction time so
 // a bad scope can never silently match nothing at check time (issue #30).
 func validGlobs(key string, globs []string) error {
 	for _, g := range globs {
 		if !doublestar.ValidatePattern(g) {
 			return fmt.Errorf("%s: malformed glob %q", key, g)
+		}
+		for _, probe := range globProbes {
+			if _, err := doublestar.Match(g, probe); err != nil {
+				return fmt.Errorf("%s: malformed glob %q: %v", key, g, err)
+			}
 		}
 	}
 	return nil
@@ -79,11 +91,9 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// matchAnyGlob assumes its globs were vetted by validGlobs at rule
-// construction, so doublestar.Match cannot error here.
 func matchAnyGlob(globs []string, rel string) bool {
 	for _, g := range globs {
-		if ok, _ := doublestar.Match(g, rel); ok {
+		if ok, err := doublestar.Match(g, rel); err == nil && ok {
 			return true
 		}
 	}

@@ -122,11 +122,20 @@ func load(fsys fs.FS, diskPath string) (*Profile, error) {
 	}
 	// A malformed scope glob would silently classify nothing — TypeOf drives
 	// placement and lint severity, so it must fail load, not match nothing
-	// (fail closed; issue #30).
+	// (fail closed; issue #30). ValidatePattern alone is not enough:
+	// doublestar re-validates a pattern SUFFIX when matching stops early,
+	// and a suffix that splits a character class holding '{' or '}' fails
+	// there — so also probe Match against a fixed corpus.
+	// FuzzLoadedScopeGlobIsMatchable keeps the corpus strict enough.
 	for _, t := range p.Types {
 		for _, g := range t.Scope {
 			if !doublestar.ValidatePattern(g) {
 				return nil, fmt.Errorf("type %q: malformed scope glob %q", t.Name, g)
+			}
+			for _, probe := range globProbes {
+				if _, err := doublestar.Match(g, probe); err != nil {
+					return nil, fmt.Errorf("type %q: malformed scope glob %q: %v", t.Name, g, err)
+				}
 			}
 		}
 	}
@@ -214,11 +223,13 @@ func (p *Profile) TypeOf(relPath string, fields map[string]any) string {
 	return ""
 }
 
-// matchAny assumes its globs were vetted at profile load, so
-// doublestar.Match cannot error here.
+// globProbes is a fixed corpus fed to doublestar.Match at load time; see
+// the load-time scope check above.
+var globProbes = []string{"", "a", "a/b", "a/b/c", "A"}
+
 func matchAny(globs []string, relPath string) bool {
 	for _, g := range globs {
-		if ok, _ := doublestar.Match(g, relPath); ok {
+		if ok, err := doublestar.Match(g, relPath); err == nil && ok {
 			return true
 		}
 	}
