@@ -15,37 +15,47 @@ import (
 
 func init() {
 	lint.Register("root-canonical-only", func(cfg map[string]any) (any, error) {
-		files := cfgStrings(cfg, "files")
+		files, err := lint.CfgStrings(cfg, "files")
+		if err != nil {
+			return nil, err
+		}
 		if len(files) == 0 {
 			return nil, nil
 		}
-		return rootCanonical{files: files, allow: cfgStrings(cfg, "allowlist")}, nil
+		allow, err := lint.CfgStrings(cfg, "allowlist")
+		if err != nil {
+			return nil, err
+		}
+		return rootCanonical{files: files, allow: allow}, nil
 	})
 	lint.Register("root-file-name-case", func(cfg map[string]any) (any, error) {
 		return rootNameCase{}, nil
 	})
 	lint.Register("top-level-folders-fixed", func(cfg map[string]any) (any, error) {
-		dirs := cfgStrings(cfg, "dirs")
+		dirs, err := lint.CfgStrings(cfg, "dirs")
+		if err != nil {
+			return nil, err
+		}
 		if len(dirs) == 0 {
 			return nil, nil
 		}
-		return topFolders{dirs: dirs, allow: cfgStrings(cfg, "allowlist")}, nil
+		allow, err := lint.CfgStrings(cfg, "allowlist")
+		if err != nil {
+			return nil, err
+		}
+		return topFolders{dirs: dirs, allow: allow}, nil
 	})
 	lint.Register("domain-split-folders", func(cfg map[string]any) (any, error) {
 		splits := map[string][]string{}
-		for k, v := range cfg {
+		for k := range cfg {
 			if k == "enabled" || k == "severity" {
 				continue
 			}
-			if list, ok := v.([]any); ok {
-				var ss []string
-				for _, e := range list {
-					if s, ok := e.(string); ok {
-						ss = append(ss, s)
-					}
-				}
-				splits[k] = ss
+			ss, err := lint.CfgStrings(cfg, k)
+			if err != nil {
+				return nil, err
 			}
+			splits[k] = ss
 		}
 		if len(splits) == 0 {
 			return nil, nil
@@ -53,7 +63,11 @@ func init() {
 		return domainSplit{splits: splits}, nil
 	})
 	lint.Register("meeting-filename-format", func(cfg map[string]any) (any, error) {
-		return meetingFilename{extra: cfgStrings(cfg, "extra_allowed")}, nil
+		extra, err := lint.CfgStrings(cfg, "extra_allowed")
+		if err != nil {
+			return nil, err
+		}
+		return meetingFilename{extra: extra}, nil
 	})
 	lint.Register("meeting-path-valid-date", func(cfg map[string]any) (any, error) {
 		return meetingPathDate{}, nil
@@ -85,7 +99,10 @@ func init() {
 		return draftsFolder{dir: cfgString(cfg, "dir", "Drafts"), patterns: res}, nil
 	})
 	lint.Register("no-junk-files", func(cfg map[string]any) (any, error) {
-		pats := cfgStrings(cfg, "patterns")
+		pats, err := lint.CfgStrings(cfg, "patterns")
+		if err != nil {
+			return nil, err
+		}
 		if len(pats) == 0 {
 			pats = []string{"*.bak", ".DS_Store", "* conflicted copy*", "~$*", "*.tmp"}
 		}
@@ -96,12 +113,22 @@ func init() {
 				return nil, fmt.Errorf("junk pattern %q: %w", p, err)
 			}
 		}
-		return junkFiles{patterns: pats, underscoreExempt: cfgStrings(cfg, "underscore_exempt")}, nil
+		exempt, err := lint.CfgStrings(cfg, "underscore_exempt")
+		if err != nil {
+			return nil, err
+		}
+		return junkFiles{patterns: pats, underscoreExempt: exempt}, nil
 	})
 	lint.Register("non-markdown-in-note-folders", func(cfg map[string]any) (any, error) {
-		scopes := cfgStrings(cfg, "scopes")
+		scopes, err := lint.CfgStrings(cfg, "scopes")
+		if err != nil {
+			return nil, err
+		}
 		if len(scopes) == 0 {
 			return nil, nil
+		}
+		if err := validGlobs("scopes", scopes); err != nil {
+			return nil, err
 		}
 		return nonMDInNotes{scopes: scopes}, nil
 	})
@@ -157,7 +184,12 @@ func caseVariantOf(f string, canonical []string) string {
 type rootNameCase struct{}
 
 func (rootNameCase) CheckVault(ctx *lint.Context) []lint.Finding {
-	canonical := cfgStrings(ctx.Prof.LintConfig("root-canonical-only"), "files")
+	// Cross-rule read at check time: root-canonical-only's own factory
+	// validates this shape whenever that rule is selected; a scoped run
+	// deliberately skips other rules' config validation (pinned by
+	// TestConfigValidationIsScopedToTheSelectedRules), so a bad shape here
+	// degrades to "unconfigured" rather than failing mid-check.
+	canonical, _ := lint.CfgStrings(ctx.Prof.LintConfig("root-canonical-only"), "files")
 	if len(canonical) == 0 {
 		return nil
 	}

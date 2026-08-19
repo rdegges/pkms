@@ -349,20 +349,16 @@ func TestRegexConfiguredRulesAlsoFailClosed(t *testing.T) {
 	}
 }
 
-// ---- known fail-open gaps this change did not close ---------------------
+// ---- scope globs fail closed (issue #30) ---------------------------------
 //
-// These pin CURRENT behavior, not desired behavior. Each one is the same
-// class of silent-config failure the change fixes for no-junk-files and
-// warning_types. If a later change closes one of these, the test below will
-// fail — that failure is the fix landing, and the test should be inverted,
-// not deleted.
+// These were the KnownGap pins from the #29 gate; the gap is now closed, so
+// they assert the desired behavior: a malformed doublestar glob must fail
+// the run at construction time, never silently match nothing.
 
-// GAP: a glob rule other than no-junk-files still swallows syntax errors.
-// matchAnyGlob (helpers.go) drops doublestar's error, so a malformed scope
-// matches nothing and the rule reports clean.
-func TestKnownGap_MalformedScopeGlobIsSilentlyIgnored(t *testing.T) {
-	_, derr := doublestar.Match("[unclosed", "Areas/Personal/x.txt")
-	require.Error(t, derr, "premise: doublestar rejects the pattern")
+// A glob rule other than no-junk-files must reject malformed patterns too.
+func TestMalformedScopeGlobFailsTheRun(t *testing.T) {
+	require.False(t, doublestar.ValidatePattern("[unclosed"),
+		"premise: doublestar rejects the pattern")
 
 	ix, prof := buildVaultWith(t, "rdegges", map[string]string{
 		"Areas/Personal/note.md":  "x\n",
@@ -371,24 +367,55 @@ func TestKnownGap_MalformedScopeGlobIsSilentlyIgnored(t *testing.T) {
 	over := map[string]map[string]any{
 		"non-markdown-in-note-folders": {"scopes": []any{"[unclosed"}},
 	}
-	fs, err := lint.Run(ix, prof, over, []string{"non-markdown-in-note-folders"})
-	require.NoError(t, err, "GAP: a malformed scope glob does not fail the run")
-	require.Empty(t, fs, "GAP: it silently matches nothing, so the rule reports clean")
+	_, err := lint.Run(ix, prof, over, []string{"non-markdown-in-note-folders"})
+	require.Error(t, err, "a malformed scope glob must fail the run")
+	require.Contains(t, err.Error(), "[unclosed", "the error must name the offending pattern")
+	require.Contains(t, err.Error(), "non-markdown-in-note-folders", "the error must name the rule")
+
+	// The rejection happens at construction, before any matching — a full
+	// run (no --rules scoping) must catch it too, matcher untouched.
+	_, err = lint.Run(ix, prof, over, nil)
+	require.Error(t, err, "a full run must reject the malformed glob at construction")
+	require.Contains(t, err.Error(), "[unclosed")
 
 	// The same rule with a valid scope does find the file — proving the
-	// vault above is not simply free of violations.
-	fs, err = lint.Run(ix, prof, map[string]map[string]any{
+	// validation did not simply disable the rule.
+	fs, err := lint.Run(ix, prof, map[string]map[string]any{
 		"non-markdown-in-note-folders": {"scopes": []any{"Areas/**"}},
 	}, []string{"non-markdown-in-note-folders"})
 	require.NoError(t, err)
 	require.Len(t, fs, 1, "%+v", fs)
 }
 
-// GAP: a list-valued option written as a bare string is dropped by
-// cfgStrings, and for rules whose factory returns nil on an empty list that
-// silently DISABLES the rule — config that cannot be honored turns a check
-// off instead of failing the run.
-func TestKnownGap_ScalarInsteadOfListSilentlyDisablesARule(t *testing.T) {
+// Every other config key holding doublestar globs gets the same treatment:
+// orphan-notes scopes, the index rules' lists globs, and the count-drift
+// counts glob.
+func TestMalformedGlobFailsEveryGlobConfiguredRule(t *testing.T) {
+	ix, prof, _ := buildVault(t, cleanVault())
+	cases := map[string]map[string]any{
+		"orphan-notes":                 {"scopes": []any{"[unclosed"}},
+		"resources-cataloged-in-index": {"file": "index.md", "lists": "[unclosed"},
+		"projects-linked-from-master":  {"file": "Projects.md", "lists": "[unclosed"},
+		"recipes-index-links-complete": {"file": "Recipes.md", "lists": "[unclosed"},
+		"recipes-count-drift":          {"file": "Recipes.md", "counts": "[unclosed"},
+	}
+	for rule, cfg := range cases {
+		t.Run(rule, func(t *testing.T) {
+			over := map[string]map[string]any{rule: cfg}
+			_, err := lint.Run(ix, prof, over, []string{rule})
+			require.Error(t, err, "%s must reject a malformed glob", rule)
+			require.Contains(t, err.Error(), "[unclosed", "the error must name the offending pattern")
+			require.Contains(t, err.Error(), rule, "the error must name the rule")
+		})
+	}
+}
+
+// ---- list-shaped config fails closed (issue #31) --------------------------
+
+// A list-valued option written as a bare string must fail the run — for
+// rules whose factory returns nil on an empty list, dropping it silently
+// DISABLED the rule (config that cannot be honored turned a check off).
+func TestScalarInsteadOfListFailsTheRun(t *testing.T) {
 	ix, prof := buildVaultWith(t, "rdegges", map[string]string{
 		"Areas/Personal/note.md":  "x\n",
 		"Areas/Personal/junk.txt": "x\n",
@@ -397,35 +424,126 @@ func TestKnownGap_ScalarInsteadOfListSilentlyDisablesARule(t *testing.T) {
 		// The intent is obvious; the shape is wrong (string, not list).
 		"non-markdown-in-note-folders": {"scopes": "Areas/**"},
 	}
-	fs, err := lint.Run(ix, prof, over, []string{"non-markdown-in-note-folders"})
-	require.NoError(t, err, "GAP: the wrong-shaped value does not fail the run")
-	require.Empty(t, fs, "GAP: the rule is silently disabled instead")
+	_, err := lint.Run(ix, prof, over, []string{"non-markdown-in-note-folders"})
+	require.Error(t, err, "a wrong-shaped value must fail the run, not disable the rule")
+	require.Contains(t, err.Error(), "scopes", "the error must name the key")
+	require.Contains(t, err.Error(), "non-markdown-in-note-folders", "the error must name the rule")
 }
 
-// GAP: warning_types written as a bare string is dropped whole — neither
-// validated nor honored — so severities silently differ from the config the
-// user wrote. This is the same silent-severity failure the change set out
-// to close, one shape away.
-func TestKnownGap_ScalarWarningTypesIsSilentlyDropped(t *testing.T) {
+// The same scalar-for-list shape must be rejected on every list-valued key,
+// not just the one the fixture above happens to use.
+func TestScalarInsteadOfListFailsEveryListConfiguredRule(t *testing.T) {
+	ix, prof, _ := buildVault(t, cleanVault())
+	cases := map[string]map[string]any{
+		"no-junk-files":                {"patterns": "*.bak"},
+		"orphan-notes":                 {"scopes": "Resources/**"},
+		"person-required-sections":     {"sections": "About"},
+		"project-status-vocab":         {"allowlist": "active"},
+		"index-no-inventory":           {"file": "index.md", "forbidden_prefixes": "- ["},
+		"related-projects-resolve":     {"folders": "Projects/"},
+		"date-format-iso":              {"keys": "date"},
+		"root-canonical-only":          {"files": "Now.md"},
+		"top-level-folders-fixed":      {"dirs": "Projects"},
+		"no-per-run-notes":             {"patterns": "^run-"},
+		"frontmatter-present":          {"warning_types": "person"},
+		"non-markdown-in-note-folders": {"scopes": 42}, // wrong scalar type too
+	}
+	for rule, cfg := range cases {
+		t.Run(rule, func(t *testing.T) {
+			var key string
+			for k := range cfg {
+				if k != "file" {
+					key = k
+				}
+			}
+			over := map[string]map[string]any{rule: cfg}
+			_, err := lint.Run(ix, prof, over, []string{rule})
+			require.Error(t, err, "%s must reject a scalar %s", rule, key)
+			require.Contains(t, err.Error(), rule, "the error must name the rule")
+			require.Contains(t, err.Error(), key, "the error must name the key")
+		})
+	}
+}
+
+// A non-string entry inside an otherwise valid list must also fail.
+func TestNonStringListEntryFailsTheRun(t *testing.T) {
+	ix, prof, _ := buildVault(t, cleanVault())
+	over := map[string]map[string]any{
+		"non-markdown-in-note-folders": {"scopes": []any{"Areas/**", 42}},
+	}
+	_, err := lint.Run(ix, prof, over, []string{"non-markdown-in-note-folders"})
+	require.Error(t, err, "a non-string list entry must fail the run")
+	require.Contains(t, err.Error(), "scopes")
+	require.Contains(t, err.Error(), "non-markdown-in-note-folders")
+}
+
+// warning_types written as a bare string must fail the run — silently
+// dropping it made severities differ from the config the user wrote, the
+// exact silent-severity failure #29 set out to close, one shape away.
+func TestScalarWarningTypesFailsTheRun(t *testing.T) {
 	ix, prof := buildVaultWith(t, "rdegges", map[string]string{
 		"People/Snyk/Broken.md": "---\nname: Jane\n---\nx\n",
 	})
 	over := map[string]map[string]any{"frontmatter-schema": {"warning_types": "person"}}
-	fs, err := lint.Run(ix, prof, over, []string{"frontmatter-schema"})
-	require.NoError(t, err, "GAP: a non-list warning_types does not fail the run")
-	require.NotEmpty(t, fs)
-	require.Zero(t, severities(fs)[lint.Warning],
-		"GAP: the user asked for person to be a warning and silently got errors")
-	require.Positive(t, severities(fs)[lint.Error])
+	_, err := lint.Run(ix, prof, over, []string{"frontmatter-schema"})
+	require.Error(t, err, "a non-list warning_types must fail the run")
+	require.Contains(t, err.Error(), "warning_types")
+	require.Contains(t, err.Error(), "frontmatter-schema")
 }
 
-// GAP: non-string entries inside warning_types are dropped by both the
-// validator and the rule, so a wrong-typed entry never surfaces.
-func TestKnownGap_NonStringWarningTypeEntryIsSilentlyDropped(t *testing.T) {
+// Non-string entries inside warning_types must be rejected, not dropped.
+func TestNonStringWarningTypeEntryFailsTheRun(t *testing.T) {
 	ix, prof, _ := buildVault(t, cleanVault())
 	over := map[string]map[string]any{
 		"frontmatter-schema": {"warning_types": []any{"person", 42}},
 	}
 	_, err := lint.Run(ix, prof, over, []string{"frontmatter-schema"})
-	require.NoError(t, err, "GAP: a non-string warning_types entry is ignored, not rejected")
+	require.Error(t, err, "a non-string warning_types entry must be rejected")
+	require.Contains(t, err.Error(), "warning_types")
+}
+
+// domain-split-folders reads its domain lists from arbitrary keys; those
+// lists are config too and must be shape-checked like every other.
+func TestDomainSplitFoldersRejectsWrongShapedLists(t *testing.T) {
+	ix, prof, _ := buildVault(t, cleanVault())
+	for label, cfg := range map[string]map[string]any{
+		"scalar value":     {"Projects": "Snyk"},
+		"non-string entry": {"Projects": []any{"Snyk", 1}},
+	} {
+		t.Run(label, func(t *testing.T) {
+			over := map[string]map[string]any{"domain-split-folders": cfg}
+			_, err := lint.Run(ix, prof, over, []string{"domain-split-folders"})
+			require.Error(t, err, "domain-split-folders must reject a %s", label)
+			require.Contains(t, err.Error(), "Projects", "the error must name the key")
+			require.Contains(t, err.Error(), "domain-split-folders")
+		})
+	}
+}
+
+// ---- the fix path validates the same config -------------------------------
+
+// lint.Fix instantiates a rule from the same merged config as lint.Run; a
+// config Run would reject must be rejected on the fix path too, or --fix
+// becomes a validation bypass.
+func TestFixPathValidatesConfigLikeRun(t *testing.T) {
+	ix, prof := buildVaultWith(t, "rdegges", map[string]string{
+		"People/Snyk/Broken.md": "---\nname: Jane\n---\nx\n",
+	})
+	for label, over := range map[string]map[string]map[string]any{
+		"scalar warning_types": {"frontmatter-schema": {"warning_types": "person"}},
+		"unknown warning_type": {"frontmatter-schema": {"warning_types": []any{"meetings"}}},
+	} {
+		t.Run(label, func(t *testing.T) {
+			f := lint.Finding{Rule: "frontmatter-schema", Path: "People/Snyk/Broken.md"}
+			_, err := lint.Fix(ix, prof, over, f)
+			require.Error(t, err, "Fix must reject the %s like Run does", label)
+		})
+	}
+
+	// A malformed glob is rejected on the fix path too.
+	f := lint.Finding{Rule: "non-markdown-in-note-folders", Path: "People/Snyk/Broken.md"}
+	_, err := lint.Fix(ix, prof,
+		map[string]map[string]any{"non-markdown-in-note-folders": {"scopes": []any{"[unclosed"}}}, f)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "[unclosed")
 }

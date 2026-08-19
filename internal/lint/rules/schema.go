@@ -16,7 +16,11 @@ import (
 
 func init() {
 	lint.Register("frontmatter-schema", func(cfg map[string]any) (any, error) {
-		return fmSchema{warningTypes: cfgStrings(cfg, "warning_types")}, nil
+		warn, err := lint.CfgStrings(cfg, "warning_types")
+		if err != nil {
+			return nil, err
+		}
+		return fmSchema{warningTypes: warn}, nil
 	})
 	lint.Register("person-topics-kebab-case", func(cfg map[string]any) (any, error) {
 		return topicsKebab{}, nil
@@ -37,7 +41,10 @@ func init() {
 		return categoryMatchesPath{}, nil
 	})
 	lint.Register("project-status-vocab", func(cfg map[string]any) (any, error) {
-		allow := cfgStrings(cfg, "allowlist")
+		allow, err := lint.CfgStrings(cfg, "allowlist")
+		if err != nil {
+			return nil, err
+		}
 		if len(allow) == 0 {
 			return nil, nil // unconfigured -> rule not applicable
 		}

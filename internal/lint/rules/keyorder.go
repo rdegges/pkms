@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/rdegges/pkms/internal/lint"
 	"github.com/rdegges/pkms/internal/vault"
@@ -18,21 +19,30 @@ func init() {
 		if !cfgBool(cfg, "enabled", false) {
 			return nil, nil
 		}
-		raw, ok := cfg["orders"].(map[string]any)
-		if !ok || len(raw) == 0 {
+		raw, ok := cfg["orders"]
+		if !ok {
+			return nil, nil
+		}
+		table, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("orders: got %T, want a table of per-type key lists", raw)
+		}
+		if len(table) == 0 {
 			return nil, nil
 		}
 		orders := map[string][]string{}
-		for typ, v := range raw {
-			if list, ok := v.([]any); ok {
-				var ss []string
-				for _, e := range list {
-					if s, ok := e.(string); ok {
-						ss = append(ss, s)
-					}
-				}
-				orders[typ] = ss
+		types := make([]string, 0, len(table))
+		for typ := range table {
+			types = append(types, typ)
+		}
+		// Sorted so a config error names the same type on every run.
+		sort.Strings(types)
+		for _, typ := range types {
+			ss, err := lint.CfgStrings(table, typ)
+			if err != nil {
+				return nil, fmt.Errorf("orders.%w", err)
 			}
+			orders[typ] = ss
 		}
 		return keyOrder{orders: orders}, nil
 	})

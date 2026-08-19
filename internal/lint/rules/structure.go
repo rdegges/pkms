@@ -11,14 +11,20 @@ import (
 
 func init() {
 	lint.Register("person-required-sections", func(cfg map[string]any) (any, error) {
-		sections := cfgStrings(cfg, "sections")
+		sections, err := lint.CfgStrings(cfg, "sections")
+		if err != nil {
+			return nil, err
+		}
 		if len(sections) == 0 {
 			return nil, nil
 		}
 		return requiredSections{typ: "person", sections: sections}, nil
 	})
 	lint.Register("meeting-required-sections", func(cfg map[string]any) (any, error) {
-		sections := cfgStrings(cfg, "sections")
+		sections, err := lint.CfgStrings(cfg, "sections")
+		if err != nil {
+			return nil, err
+		}
 		if len(sections) == 0 {
 			return nil, nil
 		}
