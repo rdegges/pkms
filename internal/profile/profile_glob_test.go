@@ -10,10 +10,12 @@ import (
 )
 
 // The #30 fix keeps the load-time glob check syntax-only (ValidatePattern)
-// and makes TypeOf surface doublestar's match-time error to its caller.
-// These tests hold that pair to the real invariant: a match-time error is
-// always surfaced — never converted to "unclassified" — and every glob shape
-// the shipped profiles use still loads and still classifies.
+// and classifies with doublestar.MatchUnvalidated — the library's
+// documented pairing for pre-validated patterns. These tests hold that pair
+// to the final invariant: a loaded scope always evaluates (TypeOf is
+// deterministic, never a silently dropped error), MatchUnvalidated agrees
+// with Match wherever Match succeeds, and every glob shape the shipped
+// profiles use still loads and still classifies.
 
 // loadManifest builds a one-type profile in memory. Going through the TOML
 // encoder keeps arbitrary fuzz bytes from becoming a decode error that would
@@ -33,12 +35,11 @@ var classifyNames = []string{
 	"{braces}.md", "[brackets].md", "back\\slash.md", "A",
 }
 
-// The invariant behind the design: whenever doublestar.Match errors on the
-// path TypeOf is classifying, TypeOf must return that error — and it must
-// error ONLY then. Load proves syntax only (doublestar re-validates the
-// pattern SUFFIX where matching stops, so some syntactically valid patterns
-// still error), which makes the classification path the load-bearing one.
-func FuzzScopeGlobMatchErrorSurfacesFromTypeOf(f *testing.F) {
+// The invariant behind the design: a scope glob either fails load
+// (ValidatePattern rejects it) or classifies cleanly — TypeOf follows
+// MatchUnvalidated exactly, and where doublestar.Match succeeds the two
+// agree.
+func FuzzLoadedScopeGlobAlwaysClassifies(f *testing.F) {
 	for _, seed := range []string{
 		"Areas/**", "**/*.md", "Resources/{Snyk,Personal}/*.md",
 		"Meetings/*/[0-9][0-9][0-9][0-9]/[0-9][0-9]/[0-9][0-9]/*.md",
@@ -62,28 +63,31 @@ func FuzzScopeGlobMatchErrorSurfacesFromTypeOf(f *testing.F) {
 		}
 		require.NotNil(t, p)
 		for _, n := range classifyNames {
-			_, matchErr := doublestar.Match(glob, n)
-			typ, typErr := p.TypeOf(n, nil)
-			if matchErr != nil && typErr == nil {
-				t.Fatalf("scope glob %q errors matching %q (%v) but TypeOf returned "+
-					"(%q, nil) — the match error was converted to unclassified",
-					glob, n, matchErr, typ)
+			want := ""
+			if doublestar.MatchUnvalidated(glob, n) {
+				want = "note"
 			}
-			if matchErr == nil && typErr != nil {
-				t.Fatalf("scope glob %q matches %q cleanly but TypeOf errored: %v",
-					glob, n, typErr)
+			got := p.TypeOf(n, nil)
+			if got != want {
+				t.Fatalf("scope glob %q: TypeOf(%q) = %q, want %q — classification "+
+					"must follow MatchUnvalidated exactly", glob, n, got, want)
+			}
+			if ok, err := doublestar.Match(glob, n); err == nil && ok != (want == "note") {
+				t.Fatalf("scope glob %q on %q: MatchUnvalidated=%v disagrees with "+
+					"successful Match=%v", glob, n, want == "note", ok)
 			}
 		}
 	})
 }
 
 // The concrete, minimal statement of the invariant: a glob doublestar
-// validates as a whole but refuses to match passes load, so the error must
-// surface from TypeOf — never read as "unclassified", which would misfile
-// every note of the type in silence.
-func TestGlobMatchErrorSurfacesFromTypeOf(t *testing.T) {
+// validates as a whole but refuses to Match (its partial-suffix
+// re-validation) still loads and still classifies — deterministically, per
+// MatchUnvalidated — instead of erroring or silently classifying nothing.
+func TestDivergentScopeGlobStillClassifies(t *testing.T) {
 	// "{[}]}" is a character class holding '}' inside an alternation.
-	// ValidatePattern accepts it; Match rejects it for every path.
+	// ValidatePattern accepts it; Match rejects it; MatchUnvalidated
+	// evaluates it.
 	const glob = "{[}]}"
 	require.True(t, doublestar.ValidatePattern(glob),
 		"premise: the load-time check accepts this pattern")
@@ -96,26 +100,25 @@ func TestGlobMatchErrorSurfacesFromTypeOf(t *testing.T) {
 		Name:          "divergent",
 		Types:         []Type{{Name: "note", Scope: []string{glob}}},
 	})
-	require.NoError(t, err, "syntax-valid globs load; match-safety is enforced per call")
+	require.NoError(t, err, "syntax-valid globs load")
 
-	typ, typErr := p.TypeOf("x", nil)
-	require.Error(t, typErr,
-		"the match error must surface from TypeOf, never read as unclassified")
-	require.Empty(t, typ)
-	require.ErrorContains(t, typErr, glob, "the error must name the offending pattern")
-	require.ErrorContains(t, typErr, "note", "the error must name the type")
+	want := ""
+	if doublestar.MatchUnvalidated(glob, "x") {
+		want = "note"
+	}
+	require.Equal(t, want, p.TypeOf("x", nil),
+		"classification must follow MatchUnvalidated exactly")
 }
 
-// DEFECT PROOF (#30 is not closed on the profile side either). load() gates
-// on ValidatePattern plus the same five-path probe corpus, and doublestar
-// re-validates the pattern SUFFIX wherever matching stops — a position those
-// five probes rarely reach. FuzzLoadedScopeGlobIsMatchable above finds a
-// counterexample in under a second of real fuzzing (`go test -fuzz` on this
-// package); its minimised input is pinned in testdata/fuzz.
+// The original #30 defect proof on the profile side, kept as a regression
+// pin. doublestar.Match re-validates the pattern SUFFIX wherever matching
+// stops, so a scope load() accepts can still error in Match — and before
+// the fix, matchAny dropped that error and the profile classified nothing.
 //
-// The consequence is the one the fix was for: the profile loads clean and
-// then classifies nothing. The assertion is fix-agnostic — rejecting at load
-// and surfacing the match error are both valid repairs.
+// The assertion is fix-agnostic — rejecting at load, surfacing the error,
+// and evaluating with MatchUnvalidated are all valid repairs. The shipped
+// code takes the third route, so the main assertion fires: the scope
+// classifies the note it designates.
 func TestLoadedScopeGlobMustNotSilentlyMissThePathItNames(t *testing.T) {
 	const rel = "People/Snyk/Jane Doe.md"
 	// The literal path plus "{[,],}" — "one comma" or "nothing" — so the
@@ -136,13 +139,9 @@ func TestLoadedScopeGlobMustNotSilentlyMissThePathItNames(t *testing.T) {
 	if err != nil {
 		return // rejected at load: fail-closed, nothing left to prove
 	}
-	typ, typErr := p.TypeOf(rel, nil)
-	if typErr != nil {
-		return // the match error surfaced: fail-closed, nothing left to prove
-	}
-	require.Equalf(t, "note", typ,
-		"the profile loaded and TypeOf did not error, so this scope must classify "+
-			"the note it names — anything else is a silently dropped match error (%q)", rel)
+	require.Equalf(t, "note", p.TypeOf(rel, nil),
+		"the profile loaded, so this scope must classify the note it names — "+
+			"anything else is a silently dropped match error (%q)", rel)
 }
 
 // A malformed glob must be caught wherever it sits: any type, any position in
@@ -220,9 +219,7 @@ func TestLoadAcceptsATypeWithNoScope(t *testing.T) {
 		Types: []Type{{Name: "note"}, {Name: "other", Scope: []string{}}},
 	})
 	require.NoError(t, err)
-	typ, typErr := p.TypeOf("anything.md", nil)
-	require.NoError(t, typErr)
-	require.Equal(t, "", typ, "a scopeless type matches nothing")
+	require.Equal(t, "", p.TypeOf("anything.md", nil), "a scopeless type matches nothing")
 }
 
 // The shipped profiles must survive their own new gate, and classification
@@ -262,8 +259,6 @@ func TestBuiltinScopeGlobsValidateAndStillClassify(t *testing.T) {
 		"Resources/Personal/Session Traces/2026-05-06.md": "session-trace",
 		"nowhere/at/all.md":                               "",
 	} {
-		got, typErr := p.TypeOf(path, nil)
-		require.NoErrorf(t, typErr, "TypeOf(%q)", path)
-		require.Equalf(t, want, got, "TypeOf(%q)", path)
+		require.Equalf(t, want, p.TypeOf(path, nil), "TypeOf(%q)", path)
 	}
 }

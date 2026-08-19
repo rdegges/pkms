@@ -120,11 +120,9 @@ func load(fsys fs.FS, diskPath string) (*Profile, error) {
 	if p.Name == "" {
 		return nil, fmt.Errorf("profile has no name")
 	}
-	// A syntactically malformed scope glob fails load (issue #30). This
-	// proves the pattern is well-formed, NOT that it is match-safe:
-	// doublestar re-validates the pattern suffix wherever matching stops,
-	// so some accepted patterns still error in Match — TypeOf surfaces
-	// those at classification time instead of converting them to no-match.
+	// A syntactically malformed scope glob fails load (issue #30). This is
+	// also matchAny's precondition: it matches with MatchUnvalidated, which
+	// is undefined on patterns ValidatePattern rejects.
 	for _, t := range p.Types {
 		for _, g := range t.Scope {
 			if !doublestar.ValidatePattern(g) {
@@ -193,17 +191,10 @@ func (p *Profile) Type(name string) *Type {
 
 // TypeOf classifies a note deterministically: first declared type whose
 // scope matches the vault-relative path and whose key trigger (if any)
-// fires. Empty string = unclassified. A scope glob doublestar cannot
-// evaluate is an error, never "unclassified" — classification drives
-// placement and lint severity, so a swallowed match error would misfile
-// every note of that type in silence (issue #30).
-func (p *Profile) TypeOf(relPath string, fields map[string]any) (string, error) {
+// fires. Empty string = unclassified.
+func (p *Profile) TypeOf(relPath string, fields map[string]any) string {
 	for _, t := range p.Types {
-		ok, err := matchAny(t.Scope, relPath)
-		if err != nil {
-			return "", fmt.Errorf("type %q: %w", t.Name, err)
-		}
-		if !ok {
+		if !matchAny(t.Scope, relPath) {
 			continue
 		}
 		if len(t.RequireAnyKey) > 0 {
@@ -218,22 +209,24 @@ func (p *Profile) TypeOf(relPath string, fields map[string]any) (string, error) 
 				continue
 			}
 		}
-		return t.Name, nil
+		return t.Name
 	}
-	return "", nil
+	return ""
 }
 
-func matchAny(globs []string, relPath string) (bool, error) {
+// matchAny reports whether relPath matches any scope glob. Callers must
+// only pass ValidatePattern-accepted globs — load enforces that — because
+// MatchUnvalidated is undefined on malformed patterns. It is doublestar's
+// documented pairing for pre-validated patterns: unlike Match, it never
+// errors on the partial-suffix re-validation artifact, so a loaded scope
+// always evaluates (issue #30).
+func matchAny(globs []string, relPath string) bool {
 	for _, g := range globs {
-		ok, err := doublestar.Match(g, relPath)
-		if err != nil {
-			return false, fmt.Errorf("scope glob %q: cannot match %q: %v", g, relPath, err)
-		}
-		if ok {
-			return true, nil
+		if doublestar.MatchUnvalidated(g, relPath) {
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 // LintConfig returns the profile's config table for a rule (may be nil).

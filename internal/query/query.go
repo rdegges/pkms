@@ -25,10 +25,8 @@ type Result struct {
 	Frontmatter map[string]any `json:"frontmatter,omitempty"`
 }
 
-// Run evaluates all predicates (AND) over every note, in path order. A
-// profile scope glob that cannot be evaluated is an error, not an empty
-// result set (fail closed; #30).
-func Run(ix *vault.Index, prof *profile.Profile, opts Options) ([]Result, error) {
+// Run evaluates all predicates (AND) over every note, in path order.
+func Run(ix *vault.Index, prof *profile.Profile, opts Options) []Result {
 	var backlinkSources map[string]bool
 	if opts.Backlinks != "" {
 		backlinkSources = map[string]bool{}
@@ -45,11 +43,7 @@ func Run(ix *vault.Index, prof *profile.Profile, opts Options) ([]Result, error)
 			if n.FM != nil {
 				fields = n.FM.Fields
 			}
-			typ, err := prof.TypeOf(p, fields)
-			if err != nil {
-				return nil, err
-			}
-			if typ != opts.Type {
+			if prof.TypeOf(p, fields) != opts.Type {
 				continue
 			}
 		}
@@ -72,7 +66,7 @@ func Run(ix *vault.Index, prof *profile.Profile, opts Options) ([]Result, error)
 		}
 		out = append(out, r)
 	}
-	return out, nil
+	return out
 }
 
 func inboundCount(ix *vault.Index, p string) int {

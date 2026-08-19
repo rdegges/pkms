@@ -372,6 +372,12 @@ func TestMalformedScopeGlobFailsTheRun(t *testing.T) {
 	require.Contains(t, err.Error(), "[unclosed", "the error must name the offending pattern")
 	require.Contains(t, err.Error(), "non-markdown-in-note-folders", "the error must name the rule")
 
+	// The rejection happens at construction, before any matching — a full
+	// run (no --rules scoping) must catch it too, matcher untouched.
+	_, err = lint.Run(ix, prof, over, nil)
+	require.Error(t, err, "a full run must reject the malformed glob at construction")
+	require.Contains(t, err.Error(), "[unclosed")
+
 	// The same rule with a valid scope does find the file — proving the
 	// validation did not simply disable the rule.
 	fs, err := lint.Run(ix, prof, map[string]map[string]any{

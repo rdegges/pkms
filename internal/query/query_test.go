@@ -57,13 +57,6 @@ Works on [[Alpha]].
 	return ix, prof
 }
 
-func mustRun(t *testing.T, ix *vault.Index, prof *profile.Profile, opts Options) []Result {
-	t.Helper()
-	rs, err := Run(ix, prof, opts)
-	require.NoError(t, err)
-	return rs
-}
-
 func paths(rs []Result) []string {
 	out := make([]string, 0, len(rs))
 	for _, r := range rs {
@@ -74,51 +67,51 @@ func paths(rs []Result) []string {
 
 func TestWhereEquality(t *testing.T) {
 	ix, prof := fixture(t)
-	rs := mustRun(t, ix, prof, Options{Where: map[string]string{"status": "active"}})
+	rs := Run(ix, prof, Options{Where: map[string]string{"status": "active"}})
 	require.Equal(t, []string{"Projects/Snyk/Alpha.md"}, paths(rs))
 }
 
 func TestWhereListContains(t *testing.T) {
 	ix, prof := fixture(t)
-	rs := mustRun(t, ix, prof, Options{Where: map[string]string{"tags": "cli"}})
+	rs := Run(ix, prof, Options{Where: map[string]string{"tags": "cli"}})
 	require.Equal(t, []string{"Projects/Snyk/Alpha.md"}, paths(rs))
 }
 
 func TestWhereIntAndAND(t *testing.T) {
 	ix, prof := fixture(t)
-	rs := mustRun(t, ix, prof, Options{Where: map[string]string{"meeting_count": "3", "last_met": "2026-05-06"}})
+	rs := Run(ix, prof, Options{Where: map[string]string{"meeting_count": "3", "last_met": "2026-05-06"}})
 	require.Equal(t, []string{"People/Snyk/Jane Doe.md"}, paths(rs))
-	rs = mustRun(t, ix, prof, Options{Where: map[string]string{"meeting_count": "3", "last_met": "1999-01-01"}})
+	rs = Run(ix, prof, Options{Where: map[string]string{"meeting_count": "3", "last_met": "1999-01-01"}})
 	require.Empty(t, rs, "predicates AND-combine")
 }
 
 func TestTypeFilter(t *testing.T) {
 	ix, prof := fixture(t)
-	rs := mustRun(t, ix, prof, Options{Type: "person"})
+	rs := Run(ix, prof, Options{Type: "person"})
 	require.Equal(t, []string{"People/Snyk/Jane Doe.md"}, paths(rs))
 }
 
 func TestTextSearch(t *testing.T) {
 	ix, prof := fixture(t)
-	rs := mustRun(t, ix, prof, Options{Text: "the thing"})
+	rs := Run(ix, prof, Options{Text: "the thing"})
 	require.Equal(t, []string{"Projects/Snyk/Alpha.md"}, paths(rs), "case-insensitive")
 }
 
 func TestBacklinks(t *testing.T) {
 	ix, prof := fixture(t)
-	rs := mustRun(t, ix, prof, Options{Backlinks: "Projects/Snyk/Alpha.md"})
+	rs := Run(ix, prof, Options{Backlinks: "Projects/Snyk/Alpha.md"})
 	require.Equal(t, []string{"People/Snyk/Jane Doe.md", "Projects/Snyk/Beta.md"}, paths(rs))
 }
 
 func TestOrphans(t *testing.T) {
 	ix, prof := fixture(t)
-	rs := mustRun(t, ix, prof, Options{Orphans: true, Type: "resource-generic"})
+	rs := Run(ix, prof, Options{Orphans: true, Type: "resource-generic"})
 	require.Equal(t, []string{"Resources/Personal/Loner.md"}, paths(rs))
 }
 
 func TestFrontmatterInResults(t *testing.T) {
 	ix, prof := fixture(t)
-	rs := mustRun(t, ix, prof, Options{Where: map[string]string{"status": "active"}})
+	rs := Run(ix, prof, Options{Where: map[string]string{"status": "active"}})
 	require.Len(t, rs, 1)
 	require.Equal(t, "alpha", rs[0].Frontmatter["description"])
 }

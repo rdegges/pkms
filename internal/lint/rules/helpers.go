@@ -60,11 +60,9 @@ func cfgRegexps(cfg map[string]any, key string) ([]*regexp.Regexp, error) {
 }
 
 // validGlobs rejects syntactically invalid doublestar patterns at
-// construction time (issue #30). This proves the pattern is well-formed,
-// NOT that it is match-safe: doublestar re-validates the pattern suffix
-// wherever matching stops, so some accepted patterns still error in Match —
-// matchAnyGlob surfaces those at check time instead of converting them to
-// no-match.
+// construction time (issue #30). This is also matchAnyGlob's precondition:
+// it matches with MatchUnvalidated, which is undefined on patterns
+// ValidatePattern rejects.
 func validGlobs(key string, globs []string) error {
 	for _, g := range globs {
 		if !doublestar.ValidatePattern(g) {
@@ -83,18 +81,15 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// matchAnyGlob reports whether rel matches any glob. A pattern doublestar
-// cannot evaluate is recorded on ctx and reads as no-match for this call;
-// the engine aborts the run with it (config-error posture, exit 2) —
-// never a silently narrowed report (issue #30).
-func matchAnyGlob(ctx *lint.Context, globs []string, rel string) bool {
+// matchAnyGlob reports whether rel matches any glob. Callers must only pass
+// ValidatePattern-accepted globs — validGlobs enforces that at rule
+// construction — because MatchUnvalidated is undefined on malformed
+// patterns. It is doublestar's documented pairing for pre-validated
+// patterns: unlike Match, it never errors on the partial-suffix
+// re-validation artifact, so an accepted glob always evaluates (issue #30).
+func matchAnyGlob(globs []string, rel string) bool {
 	for _, g := range globs {
-		ok, err := doublestar.Match(g, rel)
-		if err != nil {
-			ctx.Fail(fmt.Errorf("glob %q: cannot match %q: %v", g, rel, err))
-			return false
-		}
-		if ok {
+		if doublestar.MatchUnvalidated(g, rel) {
 			return true
 		}
 	}

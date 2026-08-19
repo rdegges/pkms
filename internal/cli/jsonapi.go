@@ -33,10 +33,7 @@ func encodeJSON(v any, escapeHTML bool) ([]byte, error) {
 // queryJSON is the frozen `query --json` shape: {"results": [...]} with a
 // stable empty array, never null (SPEC §10).
 func queryJSON(ix *vault.Index, prof *profile.Profile, opts query.Options) ([]byte, error) {
-	results, err := query.Run(ix, prof, opts)
-	if err != nil {
-		return nil, err
-	}
+	results := query.Run(ix, prof, opts)
 	if results == nil {
 		results = []query.Result{}
 	}
