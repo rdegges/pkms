@@ -12,58 +12,66 @@ import (
 
 func init() {
 	lint.Register("action-items-count-drift", func(cfg map[string]any) (any, error) {
-		file := cfgString(cfg, "file", "")
+		file, err := lint.CfgString(cfg, "file", "")
+		if err != nil {
+			return nil, err
+		}
+		key, err := lint.CfgString(cfg, "key", "total_items")
+		if err != nil {
+			return nil, err
+		}
 		if file == "" {
 			return nil, nil
 		}
-		return countDrift{file: file, key: cfgString(cfg, "key", "total_items"), mode: "checkboxes"}, nil
+		return countDrift{file: file, key: key, mode: "checkboxes"}, nil
 	})
 	lint.Register("recipes-count-drift", func(cfg map[string]any) (any, error) {
-		file := cfgString(cfg, "file", "")
-		counts := cfgString(cfg, "counts", "")
+		file, err := lint.CfgString(cfg, "file", "")
+		if err != nil {
+			return nil, err
+		}
+		counts, err := lint.CfgString(cfg, "counts", "")
+		if err != nil {
+			return nil, err
+		}
+		key, err := lint.CfgString(cfg, "key", "recipe_count")
+		if err != nil {
+			return nil, err
+		}
 		if file == "" || counts == "" {
 			return nil, nil
 		}
 		if err := validGlobs("counts", []string{counts}); err != nil {
 			return nil, err
 		}
-		return countDrift{file: file, key: cfgString(cfg, "key", "recipe_count"), mode: "files", glob: counts}, nil
+		return countDrift{file: file, key: key, mode: "files", glob: counts}, nil
 	})
 	lint.Register("recipes-index-links-complete", func(cfg map[string]any) (any, error) {
-		file := cfgString(cfg, "file", "")
-		lists := cfgString(cfg, "lists", "")
-		if file == "" || lists == "" {
-			return nil, nil
-		}
-		if err := validGlobs("lists", []string{lists}); err != nil {
+		file, lists, err := cfgIndexPair(cfg)
+		if err != nil || file == "" {
 			return nil, err
 		}
 		return indexComplete{file: file, lists: lists, sev: lint.Error, reverse: true}, nil
 	})
 	lint.Register("resources-cataloged-in-index", func(cfg map[string]any) (any, error) {
-		file := cfgString(cfg, "file", "")
-		lists := cfgString(cfg, "lists", "")
-		if file == "" || lists == "" {
-			return nil, nil
-		}
-		if err := validGlobs("lists", []string{lists}); err != nil {
+		file, lists, err := cfgIndexPair(cfg)
+		if err != nil || file == "" {
 			return nil, err
 		}
 		return indexComplete{file: file, lists: lists, sev: lint.Warning}, nil
 	})
 	lint.Register("projects-linked-from-master", func(cfg map[string]any) (any, error) {
-		file := cfgString(cfg, "file", "")
-		lists := cfgString(cfg, "lists", "")
-		if file == "" || lists == "" {
-			return nil, nil
-		}
-		if err := validGlobs("lists", []string{lists}); err != nil {
+		file, lists, err := cfgIndexPair(cfg)
+		if err != nil || file == "" {
 			return nil, err
 		}
 		return indexComplete{file: file, lists: lists, sev: lint.Warning}, nil
 	})
 	lint.Register("index-no-inventory", func(cfg map[string]any) (any, error) {
-		file := cfgString(cfg, "file", "")
+		file, err := lint.CfgString(cfg, "file", "")
+		if err != nil {
+			return nil, err
+		}
 		prefixes, err := lint.CfgStrings(cfg, "forbidden_prefixes")
 		if err != nil {
 			return nil, err
@@ -74,14 +82,17 @@ func init() {
 		return indexNoInventory{file: file, prefixes: prefixes}, nil
 	})
 	lint.Register("log-entry-format", func(cfg map[string]any) (any, error) {
-		file := cfgString(cfg, "file", "")
-		if file == "" {
-			return nil, nil
+		file, err := lint.CfgString(cfg, "file", "")
+		if err != nil || file == "" {
+			return nil, err
 		}
 		return logFormat{file: file}, nil
 	})
 	lint.Register("log-action-vocab", func(cfg map[string]any) (any, error) {
-		file := cfgString(cfg, "file", "")
+		file, err := lint.CfgString(cfg, "file", "")
+		if err != nil {
+			return nil, err
+		}
 		allow, err := lint.CfgStrings(cfg, "allowlist")
 		if err != nil {
 			return nil, err
@@ -92,27 +103,49 @@ func init() {
 		return logVocab{file: file, allow: allow}, nil
 	})
 	lint.Register("log-newest-first", func(cfg map[string]any) (any, error) {
-		file := cfgString(cfg, "file", "")
-		if file == "" {
-			return nil, nil
+		file, err := lint.CfgString(cfg, "file", "")
+		if err != nil || file == "" {
+			return nil, err
 		}
 		return logNewestFirst{file: file}, nil
 	})
 	lint.Register("log-entry-bullets-flat", func(cfg map[string]any) (any, error) {
-		if !cfgBool(cfg, "enabled", false) { // documented vs real practice conflict
+		enabled, err := lint.CfgBool(cfg, "enabled", false)
+		if err != nil {
+			return nil, err
+		}
+		if !enabled { // documented vs real practice conflict
 			return nil, nil
 		}
-		return logFlatBullets{file: cfgString(cfg, "file", "log.md")}, nil
+		file, err := lint.CfgString(cfg, "file", "log.md")
+		if err != nil {
+			return nil, err
+		}
+		return logFlatBullets{file: file}, nil
 	})
 	lint.Register("now-line-cap", func(cfg map[string]any) (any, error) {
-		file := cfgString(cfg, "file", "")
+		file, err := lint.CfgString(cfg, "file", "")
+		if err != nil {
+			return nil, err
+		}
+		warnAt, err := lint.CfgInt(cfg, "warn_at", 60)
+		if err != nil {
+			return nil, err
+		}
+		errorAt, err := lint.CfgInt(cfg, "error_at", 80)
+		if err != nil {
+			return nil, err
+		}
 		if file == "" {
 			return nil, nil
 		}
-		return nowLineCap{file: file, warnAt: cfgInt(cfg, "warn_at", 60), errorAt: cfgInt(cfg, "error_at", 80)}, nil
+		return nowLineCap{file: file, warnAt: warnAt, errorAt: errorAt}, nil
 	})
 	lint.Register("now-fixed-sections", func(cfg map[string]any) (any, error) {
-		file := cfgString(cfg, "file", "")
+		file, err := lint.CfgString(cfg, "file", "")
+		if err != nil {
+			return nil, err
+		}
 		sections, err := lint.CfgStrings(cfg, "sections")
 		if err != nil {
 			return nil, err
@@ -123,7 +156,10 @@ func init() {
 		return nowSections{file: file, sections: sections}, nil
 	})
 	lint.Register("now-no-sync-sections", func(cfg map[string]any) (any, error) {
-		file := cfgString(cfg, "file", "")
+		file, err := lint.CfgString(cfg, "file", "")
+		if err != nil {
+			return nil, err
+		}
 		res, err := cfgRegexps(cfg, "patterns")
 		if err != nil {
 			return nil, err
@@ -134,15 +170,48 @@ func init() {
 		return nowNoSync{file: file, patterns: res}, nil
 	})
 	lint.Register("now-active-projects-shape", func(cfg map[string]any) (any, error) {
-		file := cfgString(cfg, "file", "")
+		file, err := lint.CfgString(cfg, "file", "")
+		if err != nil {
+			return nil, err
+		}
+		section, err := lint.CfgString(cfg, "section", "Active Projects")
+		if err != nil {
+			return nil, err
+		}
+		minB, err := lint.CfgInt(cfg, "min_bullets", 5)
+		if err != nil {
+			return nil, err
+		}
+		maxB, err := lint.CfgInt(cfg, "max_bullets", 8)
+		if err != nil {
+			return nil, err
+		}
 		if file == "" {
 			return nil, nil
 		}
-		return nowProjects{
-			file: file, section: cfgString(cfg, "section", "Active Projects"),
-			min: cfgInt(cfg, "min_bullets", 5), max: cfgInt(cfg, "max_bullets", 8),
-		}, nil
+		return nowProjects{file: file, section: section, min: minB, max: maxB}, nil
 	})
+}
+
+// cfgIndexPair reads the file/lists pair the index rules share and
+// validates the lists glob. file == "" (with lists unset too) means
+// unconfigured.
+func cfgIndexPair(cfg map[string]any) (file, lists string, err error) {
+	file, err = lint.CfgString(cfg, "file", "")
+	if err != nil {
+		return "", "", err
+	}
+	lists, err = lint.CfgString(cfg, "lists", "")
+	if err != nil {
+		return "", "", err
+	}
+	if file == "" || lists == "" {
+		return "", "", nil
+	}
+	if err := validGlobs("lists", []string{lists}); err != nil {
+		return "", "", err
+	}
+	return file, lists, nil
 }
 
 // ---- count drift (Action Items / Recipes) -----------------------------------

@@ -25,16 +25,24 @@ func init() {
 		return brokenEmbed{}, nil
 	})
 	lint.Register("attendee-links-resolve-to-people", func(cfg map[string]any) (any, error) {
+		folder, err := lint.CfgString(cfg, "folder", "People/")
+		if err != nil {
+			return nil, err
+		}
 		return listResolvesTo{
 			key: "attendees", types: []string{"meeting"},
-			folders: []string{cfgString(cfg, "folder", "People/")},
+			folders: []string{folder},
 			sev:     lint.Error, what: "attendee",
 		}, nil
 	})
 	lint.Register("related-people-resolve-to-people", func(cfg map[string]any) (any, error) {
+		folder, err := lint.CfgString(cfg, "folder", "People/")
+		if err != nil {
+			return nil, err
+		}
 		return listResolvesTo{
 			key: "related_people", types: nil, // any note carrying the key
-			folders: []string{cfgString(cfg, "folder", "People/")},
+			folders: []string{folder},
 			sev:     lint.Error, what: "related person",
 		}, nil
 	})

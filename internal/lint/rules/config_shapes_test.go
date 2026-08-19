@@ -161,18 +161,15 @@ func fixableTopicsFinding(t *testing.T) (*vault.Index, *profile.Profile, lint.Fi
 	return ix, prof, fs[0]
 }
 
-// ---- known fail-open gaps this change did not close -----------------------
+// ---- scalar-valued options fail closed (issue #33) -------------------------
 //
-// These pin CURRENT behavior, not desired behavior. Each is the same class of
-// silent-config failure #30/#31 closed for globs and lists, one config shape
-// away. If a later change closes one, the test below fails — that failure is
-// the fix landing, and the test should be inverted, not deleted.
+// These were the KnownGap pins from the #32 gate; the gaps are now closed,
+// so they assert the desired behavior.
 
-// GAP: only LIST-valued options fail closed. A scalar-valued option
-// (`file`, `lists`, `dir`, `key`, `section`) written with the wrong type is
-// still dropped by cfgString, and for rules that return nil on an empty
-// `file` that silently DISABLES the check.
-func TestKnownGap_WrongTypedScalarOptionSilentlyDisablesARule(t *testing.T) {
+// A scalar-valued option (`file`, `lists`, `dir`, `key`, `section`, ...)
+// written with the wrong type must fail the run — for rules that return nil
+// on an empty `file`, dropping it silently DISABLED the check.
+func TestWrongTypedScalarOptionFailsTheRun(t *testing.T) {
 	ix, prof := buildVaultWith(t, "rdegges", map[string]string{
 		"Resources/Personal/Recipes/Recipes.md":     "# Recipes\n",
 		"Resources/Personal/Recipes/Uncataloged.md": "---\ntype: recipe\n---\nx\n",
@@ -182,18 +179,66 @@ func TestKnownGap_WrongTypedScalarOptionSilentlyDisablesARule(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, fs, 1, "premise: the uncataloged recipe is a finding: %+v", fs)
 
-	for label, cfg := range map[string]map[string]any{
-		"file as int":  {"file": 42},
-		"file as list": {"file": []any{"Resources/Personal/Recipes/Recipes.md"}},
-		"lists as list": {"file": "Resources/Personal/Recipes/Recipes.md",
-			"lists": []any{"Resources/Personal/Recipes/*.md"}},
+	for label, tc := range map[string]struct {
+		cfg map[string]any
+		key string
+	}{
+		"file as int":  {map[string]any{"file": 42}, "file"},
+		"file as list": {map[string]any{"file": []any{"Resources/Personal/Recipes/Recipes.md"}}, "file"},
+		"lists as list": {map[string]any{"file": "Resources/Personal/Recipes/Recipes.md",
+			"lists": []any{"Resources/Personal/Recipes/*.md"}}, "lists"},
 	} {
 		t.Run(label, func(t *testing.T) {
-			fs, err := lint.Run(ix, prof,
-				map[string]map[string]any{"recipes-index-links-complete": cfg},
+			_, err := lint.Run(ix, prof,
+				map[string]map[string]any{"recipes-index-links-complete": tc.cfg},
 				[]string{"recipes-index-links-complete"})
-			require.NoError(t, err, "GAP: a wrong-typed scalar option does not fail the run")
-			require.Empty(t, fs, "GAP: the rule is silently disabled instead: %+v", fs)
+			require.Error(t, err, "a wrong-typed scalar option must fail the run")
+			require.Contains(t, err.Error(), tc.key, "the error must name the key")
+			require.Contains(t, err.Error(), "recipes-index-links-complete",
+				"the error must name the rule")
+		})
+	}
+}
+
+// The same wrong-type rejection on every scalar-configured key class, not
+// just the one rule the fixture above uses: string keys, int keys, and the
+// engine-level `enabled` flag.
+func TestWrongTypedScalarOptionFailsEveryScalarConfiguredRule(t *testing.T) {
+	ix, prof, _ := buildVault(t, cleanVault())
+	cases := map[string]struct {
+		rule string
+		cfg  map[string]any
+		key  string
+	}{
+		"dir as int":        {"no-drafts-folder", map[string]any{"dir": 5}, "dir"},
+		"folder as int":     {"attendee-links-resolve-to-people", map[string]any{"folder": 42}, "folder"},
+		"section as int":    {"now-active-projects-shape", map[string]any{"file": "Now.md", "section": 42}, "section"},
+		"key as int":        {"recipes-count-drift", map[string]any{"file": "R.md", "counts": "R/*.md", "key": 42}, "key"},
+		"warn_at as string": {"now-line-cap", map[string]any{"file": "Now.md", "warn_at": "60"}, "warn_at"},
+		"warn_at as float":  {"now-line-cap", map[string]any{"file": "Now.md", "warn_at": 60.5}, "warn_at"},
+		"min_bullets as bool": {"now-active-projects-shape",
+			map[string]any{"file": "Now.md", "min_bullets": true}, "min_bullets"},
+		"enabled as string": {"empty-note", map[string]any{"enabled": "false"}, "enabled"},
+		"enabled as int":    {"empty-note", map[string]any{"enabled": 1}, "enabled"},
+	}
+	for label, tc := range cases {
+		t.Run(label, func(t *testing.T) {
+			_, err := lint.Run(ix, prof,
+				map[string]map[string]any{tc.rule: tc.cfg}, []string{tc.rule})
+			require.Errorf(t, err, "%s must reject a wrong-typed %s", tc.rule, tc.key)
+			require.Contains(t, err.Error(), tc.key, "the error must name the key")
+			require.Contains(t, err.Error(), tc.rule, "the error must name the rule")
+		})
+	}
+
+	// The valid types keep working: TOML decode delivers int64 for
+	// integers, and Go callers pass int; both must be accepted.
+	for label, warnAt := range map[string]any{"int64": int64(70), "int": 70} {
+		t.Run("valid warn_at "+label, func(t *testing.T) {
+			_, err := lint.Run(ix, prof, map[string]map[string]any{
+				"now-line-cap": {"file": "Now.md", "warn_at": warnAt},
+			}, []string{"now-line-cap"})
+			require.NoError(t, err)
 		})
 	}
 }
@@ -286,46 +331,67 @@ func TestKeyOrderReadsARealProfileTOMLOrdersTable(t *testing.T) {
 	}
 }
 
-// GAP: an unrecognized `severity` override is dropped without a word, so a
-// user who asks to promote a warning to an error silently keeps the warning.
-// This is the same silent-severity failure #29 closed for warning_types.
-func TestKnownGap_UnrecognizedSeverityOverrideIsSilentlyIgnored(t *testing.T) {
+// ---- severity overrides fail closed (issue #34) ----------------------------
+
+// An unrecognized `severity` override must fail the run — dropping it meant
+// a user who asked to promote a warning to an error silently kept the
+// warning, the same silent-severity failure #29 closed for warning_types.
+func TestUnrecognizedSeverityOverrideFailsTheRun(t *testing.T) {
 	ix, prof := buildVaultWith(t, "rdegges", map[string]string{
 		"Resources/Personal/Orphan.md": "---\ntype: resource\n---\nx\n",
 		"index.md":                     "# Index\n",
 	})
-	sevCount := func(sev any) (int, int) {
-		fs, err := lint.Run(ix, prof,
-			map[string]map[string]any{"orphan-notes": {"severity": sev}}, []string{"orphan-notes"})
-		require.NoError(t, err)
-		require.NotEmpty(t, fs, "the fixture must produce an orphan finding")
-		s := severities(fs)
-		return s[lint.Error], s[lint.Warning]
-	}
-	errs, warns := sevCount("error")
-	require.Positive(t, errs, "premise: the exact spelling promotes the finding")
-	require.Zero(t, warns)
+
+	// Premise: the exact spellings work, and the promotion is applied.
+	fs, err := lint.Run(ix, prof,
+		map[string]map[string]any{"orphan-notes": {"severity": "error"}}, []string{"orphan-notes"})
+	require.NoError(t, err)
+	require.NotEmpty(t, fs, "the fixture must produce an orphan finding")
+	require.Positive(t, severities(fs)[lint.Error], "the promotion is applied")
+	require.Zero(t, severities(fs)[lint.Warning])
+	_, err = lint.Run(ix, prof,
+		map[string]map[string]any{"orphan-notes": {"severity": "warning"}}, []string{"orphan-notes"})
+	require.NoError(t, err)
 
 	for label, sev := range map[string]any{
 		"wrong case": "Error",
 		"plural":     "errors",
 		"int":        1,
 		"bool":       true,
+		"empty":      "",
+		"list":       []any{"error"},
 	} {
 		t.Run(label, func(t *testing.T) {
-			errs, warns := sevCount(sev)
-			require.Zero(t, errs, "GAP: the promotion the user asked for was dropped")
-			require.Positive(t, warns, "GAP: it silently stays a warning")
+			_, err := lint.Run(ix, prof,
+				map[string]map[string]any{"orphan-notes": {"severity": sev}}, []string{"orphan-notes"})
+			require.Error(t, err, "an unrecognized severity must fail the run, not be dropped")
+			require.Contains(t, err.Error(), "severity", "the error must name the key")
+			require.Contains(t, err.Error(), "orphan-notes", "the error must name the rule")
 		})
 	}
 }
 
-// GAP: root-file-name-case reads root-canonical-only's `files` at CHECK time
-// and swallows the shape error, so a broken (or merely disabled) source rule
-// silently turns root-file-name-case into a no-op. Unlike the scoped-run case
-// the maker documented, `enabled = false` plus a bad shape reaches this on a
-// FULL run — nothing validates the config and nothing reports the miss.
-func TestKnownGap_RootFileNameCaseGoesQuietWhenItsSourceRuleIsBroken(t *testing.T) {
+// A disabled rule is skipped before its config is read — including its
+// severity. Pinned alongside TestDisabledRuleSkipsConfigValidation so the
+// enabled-skip stays ahead of the new severity check.
+func TestDisabledRuleSkipsSeverityValidation(t *testing.T) {
+	ix, prof, _ := buildVault(t, cleanVault())
+	_, err := lint.Run(ix, prof, map[string]map[string]any{
+		"orphan-notes": {"enabled": false, "severity": "bogus"},
+	}, nil)
+	require.NoError(t, err, "disabled rules are skipped before their config is read")
+}
+
+// ---- cross-rule config is resolved at construction (issue #35) -------------
+
+// root-file-name-case consumes root-canonical-only's `files` list. That
+// read now happens when the rule is CONSTRUCTED — against the merged
+// (profile + override) config, with the shape validated — never at check
+// time where an error would have to be swallowed. A broken source list
+// fails every run that instantiates the reader, including a scoped run and
+// a run where the source rule is disabled: config an enabled rule consumes
+// must be honorable, whoever owns it.
+func TestRootFileNameCaseValidatesTheConfigItConsumes(t *testing.T) {
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, "now.md"), []byte("x\n"), 0o644))
 
@@ -349,19 +415,59 @@ func TestKnownGap_RootFileNameCaseGoesQuietWhenItsSourceRuleIsBroken(t *testing.
 	require.Len(t, fs, 1, "premise: 'now.md' is a case variant of 'Now.md': %+v", fs)
 	require.Equal(t, "root-file-name-case", fs[0].Rule)
 
-	// A scalar `files` fails the full run (root-canonical-only's own factory
-	// rejects it) but NOT a scoped run of the reader rule.
+	// A scalar `files` fails a scoped run of the READER rule: the config it
+	// consumes is validated when it is built.
 	scalar := load(t, "[lint.root-canonical-only]\nfiles = \"Now.md\"\n")
-	_, err = lint.Run(ix, scalar, nil, nil)
-	require.Error(t, err, "the source rule's own factory catches it on a full run")
-	fs, err = lint.Run(ix, scalar, nil, []string{"root-file-name-case"})
-	require.NoError(t, err, "GAP: a scoped run never validates the config it reads")
-	require.Empty(t, fs, "GAP: root-file-name-case silently checks nothing: %+v", fs)
+	_, err = lint.Run(ix, scalar, nil, []string{"root-file-name-case"})
+	require.Error(t, err, "a scoped run must validate the config the rule consumes")
+	require.Contains(t, err.Error(), "root-file-name-case", "the error must name the reader rule")
+	require.Contains(t, err.Error(), "files", "the error must name the key")
 
-	// Disabled + scalar is the reachable one: nothing validates it on ANY run
-	// and root-file-name-case reports clean.
+	// And the full run still fails (both factories reject it).
+	_, err = lint.Run(ix, scalar, nil, nil)
+	require.Error(t, err)
+
+	// Disabling the SOURCE rule does not skip the reader's validation: the
+	// reader is enabled and consumes that list.
 	off := load(t, "[lint.root-canonical-only]\nenabled = false\nfiles = \"Now.md\"\n")
-	fs, err = lint.Run(ix, off, nil, nil)
-	require.NoError(t, err, "GAP: a disabled rule's broken config is never validated")
-	require.Empty(t, fs, "GAP: a full run reports clean and the check is gone: %+v", fs)
+	_, err = lint.Run(ix, off, nil, nil)
+	require.Error(t, err, "an enabled rule's consumed config must be validated on a full run")
+	require.Contains(t, err.Error(), "root-file-name-case")
+
+	// A disabled source with a WELL-SHAPED list still feeds the reader: the
+	// case check works even when the canonical-set check is off.
+	offGood := load(t, "[lint.root-canonical-only]\nenabled = false\nfiles = [\"Now.md\"]\n")
+	fs, err = lint.Run(ix, offGood, nil, nil)
+	require.NoError(t, err)
+	require.Len(t, fs, 1, "%+v", fs)
+	require.Equal(t, "root-file-name-case", fs[0].Rule)
+}
+
+// The construction-time read resolves the MERGED config: a vault override
+// on root-canonical-only.files must reach root-file-name-case, even on a
+// scoped run. (The old check-time read saw the profile table only.)
+func TestRootFileNameCaseHonorsOverriddenSourceConfig(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "readme.md"), []byte("x\n"), 0o644))
+	dir := t.TempDir()
+	manifest := "schema_version = 1\nname = \"ov\"\nscaffold = [\"Areas\"]\n\n" +
+		"[[types]]\nname = \"area\"\nscope = [\"Areas/**\"]\n\n" +
+		"[lint.root-canonical-only]\nfiles = [\"Now.md\"]\n"
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "profile.toml"), []byte(manifest), 0o644))
+	prof, err := profile.Load(dir)
+	require.NoError(t, err)
+	ix, err := vault.BuildIndex(root, vault.WalkOptions{})
+	require.NoError(t, err)
+
+	// Without the override, "readme.md" is no case variant of "Now.md".
+	fs, err := lint.Run(ix, prof, nil, []string{"root-file-name-case"})
+	require.NoError(t, err)
+	require.Empty(t, fs, "%+v", fs)
+
+	// With an override declaring README.md canonical, the variant is caught.
+	over := map[string]map[string]any{"root-canonical-only": {"files": []any{"README.md"}}}
+	fs, err = lint.Run(ix, prof, over, []string{"root-file-name-case"})
+	require.NoError(t, err)
+	require.Len(t, fs, 1, "the reader must see the merged config: %+v", fs)
+	require.Equal(t, "root-file-name-case", fs[0].Rule)
 }

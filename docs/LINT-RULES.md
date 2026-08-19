@@ -26,17 +26,22 @@ Conventions:
 - `HHMM` in filename regexes = `([01][0-9]|2[0-3])[0-5][0-9]`.
 - **Malformed config fails the run.** A glob or regex pattern that cannot
   compile (junk-file patterns, scope/lists/counts globs), a `warning_types`
-  entry that names no declared note type, or a list-valued option written as
-  a bare scalar or containing a non-string entry, stops `pkms lint` with
-  exit 2 before any findings are reported or fixes applied. An accepted
-  glob always evaluates without erroring — with one known exception:
-  doublestar v4.10.0's validator is more permissive than its matcher for a
-  character class containing a comma inside a brace alternation, so such
-  an accepted pattern silently matches nothing (pkms issue #38). `--fix`
-  validates through the same path. Config
-  validation runs only for the rules a run instantiates: rules disabled
-  with `enabled = false`, or excluded by `--rules`, are not validated.
-  Profile type-scope globs are validated when the profile loads.
+  entry that names no declared note type, a list-valued option written as
+  a bare scalar or containing a non-string entry, a scalar option with the
+  wrong type (`file`, `dir`, `key`, `section`, integer caps), a non-bool
+  `enabled`, or a `severity` that is not exactly `"error"` or `"warning"`,
+  stops `pkms lint` with exit 2 before any findings are reported or fixes
+  applied. An accepted glob always evaluates without erroring — with one
+  known exception: doublestar v4.10.0's validator is more permissive than
+  its matcher for a character class containing a comma inside a brace
+  alternation, so such an accepted pattern silently matches nothing (pkms
+  issue #38). `--fix` validates through the same path. Config validation
+  runs only for the rules a run instantiates: rules disabled with
+  `enabled = false`, or excluded by `--rules`, are not validated — except
+  that config an ENABLED rule consumes is always validated, whichever
+  rule's table it lives in (root-file-name-case reads
+  root-canonical-only's `files` at construction). Profile type-scope globs
+  are validated when the profile loads.
 
 ---
 
