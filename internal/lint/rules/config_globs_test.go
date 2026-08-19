@@ -13,9 +13,11 @@ import (
 // The #30 fix keeps validGlobs as a syntax-only gate (ValidatePattern) and
 // matches with doublestar.MatchUnvalidated — the library's documented
 // pairing for pre-validated patterns. These tests hold that pair to the
-// final invariant: an accepted glob always evaluates (never errors, never
-// converts to no-match), MatchUnvalidated agrees with Match wherever Match
-// succeeds, and every glob shape real config uses keeps working.
+// final invariant: an accepted glob always evaluates without erroring,
+// MatchUnvalidated agrees with Match wherever Match succeeds, and every
+// glob shape real config uses keeps working. (The one known place where an
+// accepted glob still evaluates to a silent universal no-match is pinned
+// in config_globs_designation_test.go — issue #38.)
 
 // The invariant behind the design: a pattern either fails construction
 // (ValidatePattern rejects it) or evaluates cleanly — lint.Run never errors

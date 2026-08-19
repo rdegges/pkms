@@ -122,7 +122,7 @@ func load(fsys fs.FS, diskPath string) (*Profile, error) {
 	}
 	// A syntactically malformed scope glob fails load (issue #30). This is
 	// also matchAny's precondition: it matches with MatchUnvalidated, which
-	// is undefined on patterns ValidatePattern rejects.
+	// answers a silent universal false on a pattern ValidatePattern rejects.
 	for _, t := range p.Types {
 		for _, g := range t.Scope {
 			if !doublestar.ValidatePattern(g) {
@@ -216,10 +216,14 @@ func (p *Profile) TypeOf(relPath string, fields map[string]any) string {
 
 // matchAny reports whether relPath matches any scope glob. Callers must
 // only pass ValidatePattern-accepted globs — load enforces that — because
-// MatchUnvalidated is undefined on malformed patterns. It is doublestar's
-// documented pairing for pre-validated patterns: unlike Match, it never
-// errors on the partial-suffix re-validation artifact, so a loaded scope
-// always evaluates (issue #30).
+// MatchUnvalidated answers a silent universal false on a malformed pattern
+// (never a panic or an error). It is doublestar's documented pairing for
+// pre-validated patterns; the validator and matcher diverge in two known
+// ways: Match errors on its partial-suffix re-validation artifact
+// (MatchUnvalidated evaluates those correctly), and a character class
+// holding a comma inside a brace alternation validates but matches nothing
+// — ValidatePattern does not close that one (issue #38, pinned by the
+// KnownGap tests).
 func matchAny(globs []string, relPath string) bool {
 	for _, g := range globs {
 		if doublestar.MatchUnvalidated(g, relPath) {

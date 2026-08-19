@@ -29,7 +29,11 @@ Conventions:
   entry that names no declared note type, or a list-valued option written as
   a bare scalar or containing a non-string entry, stops `pkms lint` with
   exit 2 before any findings are reported or fixes applied. An accepted
-  glob always evaluates. `--fix` validates through the same path. Config
+  glob always evaluates without erroring — with one known exception:
+  doublestar v4.10.0's validator is more permissive than its matcher for a
+  character class containing a comma inside a brace alternation, so such
+  an accepted pattern silently matches nothing (pkms issue #38). `--fix`
+  validates through the same path. Config
   validation runs only for the rules a run instantiates: rules disabled
   with `enabled = false`, or excluded by `--rules`, are not validated.
   Profile type-scope globs are validated when the profile loads.

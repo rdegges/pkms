@@ -61,8 +61,9 @@ func cfgRegexps(cfg map[string]any, key string) ([]*regexp.Regexp, error) {
 
 // validGlobs rejects syntactically invalid doublestar patterns at
 // construction time (issue #30). This is also matchAnyGlob's precondition:
-// it matches with MatchUnvalidated, which is undefined on patterns
-// ValidatePattern rejects.
+// it matches with MatchUnvalidated, which on a pattern ValidatePattern
+// rejects returns a silent universal false — never a panic or an error —
+// so an unvalidated pattern would disable its rule without a word.
 func validGlobs(key string, globs []string) error {
 	for _, g := range globs {
 		if !doublestar.ValidatePattern(g) {
@@ -83,10 +84,14 @@ func contains(list []string, s string) bool {
 
 // matchAnyGlob reports whether rel matches any glob. Callers must only pass
 // ValidatePattern-accepted globs — validGlobs enforces that at rule
-// construction — because MatchUnvalidated is undefined on malformed
-// patterns. It is doublestar's documented pairing for pre-validated
-// patterns: unlike Match, it never errors on the partial-suffix
-// re-validation artifact, so an accepted glob always evaluates (issue #30).
+// construction — because MatchUnvalidated answers a silent universal false
+// on a malformed pattern (never a panic or an error). It is doublestar's
+// documented pairing for pre-validated patterns; the validator and matcher
+// diverge in two known ways: Match errors on its partial-suffix
+// re-validation artifact (MatchUnvalidated evaluates those correctly), and
+// a character class holding a comma inside a brace alternation validates
+// but matches nothing — ValidatePattern does not close that one (issue
+// #38, pinned by the KnownGap tests).
 func matchAnyGlob(globs []string, rel string) bool {
 	for _, g := range globs {
 		if doublestar.MatchUnvalidated(g, rel) {
