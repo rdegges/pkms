@@ -234,7 +234,7 @@ func instantiate(prof *profile.Profile, overrides map[string]map[string]any, onl
 		if raw, ok := cfg["severity"]; ok {
 			s, isStr := raw.(string)
 			if !isStr || (s != string(Error) && s != string(Warning)) {
-				return nil, nil, fmt.Errorf(`rule %s: severity: got %v (%T), want "error" or "warning"`, id, raw, raw)
+				return nil, nil, fmt.Errorf(`rule %s: severity: got %T (%v), want "error" or "warning"`, id, raw, raw)
 			}
 		}
 		// warning_types must name declared profile types — a typo'd type

@@ -471,8 +471,8 @@ func TestEmptyPeerListDisablesTheReader(t *testing.T) {
 // GAP: an empty string is the "unconfigured" sentinel for every `file`-gated
 // rule, so `file = ""` silently switches the rule OFF — the exact outcome
 // #33 closed for wrong types, reachable with a well-typed value. `severity`
-// rejects "" (TestUnrecognizedSeverityIsRejectedForEveryRule); `file` does
-// not, and docs/LINT-RULES.md does not mention it.
+// rejects "" (TestUnrecognizedSeverityIsRejectedForEveryEnabledRule); `file`
+// does not, and docs/LINT-RULES.md does not mention it.
 func TestKnownGap_EmptyStringDisablesAFileGatedRule(t *testing.T) {
 	long := "# Now\n" + strings.Repeat("- line\n", 400)
 	ix, prof := buildVaultWith(t, "rdegges", map[string]string{"Now.md": long})
