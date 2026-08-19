@@ -17,32 +17,6 @@ import (
 
 // ---- config readers ----------------------------------------------------
 
-func cfgString(cfg map[string]any, key, def string) string {
-	if v, ok := cfg[key].(string); ok {
-		return v
-	}
-	return def
-}
-
-func cfgInt(cfg map[string]any, key string, def int) int {
-	switch v := cfg[key].(type) {
-	case int64:
-		return int(v)
-	case int:
-		return v
-	case float64:
-		return int(v)
-	}
-	return def
-}
-
-func cfgBool(cfg map[string]any, key string, def bool) bool {
-	if v, ok := cfg[key].(bool); ok {
-		return v
-	}
-	return def
-}
-
 func cfgRegexps(cfg map[string]any, key string) ([]*regexp.Regexp, error) {
 	pats, err := lint.CfgStrings(cfg, key)
 	if err != nil {

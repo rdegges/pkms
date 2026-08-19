@@ -16,7 +16,11 @@ func init() {
 	//   [lint.frontmatter-key-order.orders]
 	//   meeting = ["date", "time", "duration", "type", ...]
 	lint.Register("frontmatter-key-order", func(cfg map[string]any) (any, error) {
-		if !cfgBool(cfg, "enabled", false) {
+		enabled, err := lint.CfgBool(cfg, "enabled", false)
+		if err != nil {
+			return nil, err
+		}
+		if !enabled {
 			return nil, nil
 		}
 		raw, ok := cfg["orders"]

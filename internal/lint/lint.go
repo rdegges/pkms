@@ -69,10 +69,23 @@ type Fixer interface {
 // error) means "not applicable with this config" and the rule is skipped.
 type Factory func(cfg map[string]any) (any, error)
 
-var registry = map[string]Factory{}
+// PeerFactory builds a rule that also consumes ANOTHER rule's config. The
+// peer table is resolved (profile + vault overrides, merged) and consumed
+// at construction — never read at check time, where a shape error would
+// have to be swallowed (issue #35).
+type PeerFactory func(cfg map[string]any, peer func(ruleID string) map[string]any) (any, error)
+
+var registry = map[string]PeerFactory{}
 
 // Register adds a rule factory; called from init() in the rules package.
 func Register(id string, f Factory) {
+	RegisterPeer(id, func(cfg map[string]any, _ func(string) map[string]any) (any, error) {
+		return f(cfg)
+	})
+}
+
+// RegisterPeer adds a factory that reads another rule's merged config.
+func RegisterPeer(id string, f PeerFactory) {
 	if _, dup := registry[id]; dup {
 		panic("duplicate lint rule id " + id)
 	}
@@ -117,6 +130,53 @@ func CfgStrings(cfg map[string]any, key string) ([]string, error) {
 	return nil, fmt.Errorf("%s: got %T, want a list of strings", key, raw)
 }
 
+// CfgString reads a string config value. An absent key is the default; a
+// present value of any other type is a config error, never silently
+// dropped — for rules that turn off on an empty string, dropping it
+// disabled the check without a word (fail closed; issue #33).
+func CfgString(cfg map[string]any, key, def string) (string, error) {
+	raw, ok := cfg[key]
+	if !ok {
+		return def, nil
+	}
+	s, ok := raw.(string)
+	if !ok {
+		return "", fmt.Errorf("%s: got %T (%v), want a string", key, raw, raw)
+	}
+	return s, nil
+}
+
+// CfgInt reads an integer config value. TOML decode delivers int64 and Go
+// callers pass int; anything else — including a float, which would
+// silently truncate — is a config error (issue #33).
+func CfgInt(cfg map[string]any, key string, def int) (int, error) {
+	raw, ok := cfg[key]
+	if !ok {
+		return def, nil
+	}
+	switch v := raw.(type) {
+	case int64:
+		return int(v), nil
+	case int:
+		return v, nil
+	}
+	return 0, fmt.Errorf("%s: got %T (%v), want an integer", key, raw, raw)
+}
+
+// CfgBool reads a boolean config value; a non-bool is a config error
+// (issue #33).
+func CfgBool(cfg map[string]any, key string, def bool) (bool, error) {
+	raw, ok := cfg[key]
+	if !ok {
+		return def, nil
+	}
+	b, ok := raw.(bool)
+	if !ok {
+		return false, fmt.Errorf("%s: got %T (%v), want a boolean", key, raw, raw)
+	}
+	return b, nil
+}
+
 // mergeCfg overlays vault-level overrides on the profile's rule config.
 func mergeCfg(base, over map[string]any) map[string]any {
 	out := map[string]any{}
@@ -148,6 +208,9 @@ func instantiate(prof *profile.Profile, overrides map[string]map[string]any, onl
 		}
 		return false
 	}
+	peer := func(pid string) map[string]any {
+		return mergeCfg(prof.LintConfig(pid), overrides[pid])
+	}
 	rules := map[string]any{}
 	cfgs := map[string]map[string]any{}
 	for _, id := range RuleIDs() {
@@ -155,8 +218,24 @@ func instantiate(prof *profile.Profile, overrides map[string]map[string]any, onl
 			continue
 		}
 		cfg := mergeCfg(prof.LintConfig(id), overrides[id])
-		if enabled, ok := cfg["enabled"].(bool); ok && !enabled {
+		// enabled must be a bool — a wrong-typed value must not silently
+		// leave the rule on (fail closed; issue #33). The skip stays ahead
+		// of all other validation: a disabled rule's config is not read.
+		enabled, err := CfgBool(cfg, "enabled", true)
+		if err != nil {
+			return nil, nil, fmt.Errorf("rule %s: %w", id, err)
+		}
+		if !enabled {
 			continue
+		}
+		// severity must be exactly "error" or "warning" — an unrecognized
+		// spelling must not silently keep the profile's severity (fail
+		// closed; issue #34).
+		if raw, ok := cfg["severity"]; ok {
+			s, isStr := raw.(string)
+			if !isStr || (s != string(Error) && s != string(Warning)) {
+				return nil, nil, fmt.Errorf(`rule %s: severity: got %T (%v), want "error" or "warning"`, id, raw, raw)
+			}
 		}
 		// warning_types must name declared profile types — a typo'd type
 		// name or a wrong-shaped value must not silently leave severities
@@ -170,7 +249,7 @@ func instantiate(prof *profile.Profile, overrides map[string]map[string]any, onl
 				return nil, nil, fmt.Errorf("rule %s: warning_types names unknown note type %q (profile %q declares no such type)", id, name, prof.Name)
 			}
 		}
-		r, err := registry[id](cfg)
+		r, err := registry[id](cfg, peer)
 		if err != nil {
 			return nil, nil, fmt.Errorf("rule %s: %w", id, err)
 		}

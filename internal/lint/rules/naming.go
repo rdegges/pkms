@@ -28,8 +28,18 @@ func init() {
 		}
 		return rootCanonical{files: files, allow: allow}, nil
 	})
-	lint.Register("root-file-name-case", func(cfg map[string]any) (any, error) {
-		return rootNameCase{}, nil
+	lint.RegisterPeer("root-file-name-case", func(cfg map[string]any, peer func(string) map[string]any) (any, error) {
+		// The canonical set is root-canonical-only's config; it is resolved
+		// (merged) and validated HERE, at construction — a check-time read
+		// would have to swallow a shape error (issue #35).
+		canonical, err := lint.CfgStrings(peer("root-canonical-only"), "files")
+		if err != nil {
+			return nil, fmt.Errorf("root-canonical-only.%w", err)
+		}
+		if len(canonical) == 0 {
+			return nil, nil
+		}
+		return rootNameCase{canonical: canonical}, nil
 	})
 	lint.Register("top-level-folders-fixed", func(cfg map[string]any) (any, error) {
 		dirs, err := lint.CfgStrings(cfg, "dirs")
@@ -96,7 +106,11 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		return draftsFolder{dir: cfgString(cfg, "dir", "Drafts"), patterns: res}, nil
+		dir, err := lint.CfgString(cfg, "dir", "Drafts")
+		if err != nil {
+			return nil, err
+		}
+		return draftsFolder{dir: dir, patterns: res}, nil
 	})
 	lint.Register("no-junk-files", func(cfg map[string]any) (any, error) {
 		pats, err := lint.CfgStrings(cfg, "patterns")
@@ -181,24 +195,15 @@ func caseVariantOf(f string, canonical []string) string {
 	return ""
 }
 
-type rootNameCase struct{}
+type rootNameCase struct{ canonical []string }
 
-func (rootNameCase) CheckVault(ctx *lint.Context) []lint.Finding {
-	// Cross-rule read at check time: root-canonical-only's own factory
-	// validates this shape whenever that rule is selected; a scoped run
-	// deliberately skips other rules' config validation (pinned by
-	// TestConfigValidationIsScopedToTheSelectedRules), so a bad shape here
-	// degrades to "unconfigured" rather than failing mid-check.
-	canonical, _ := lint.CfgStrings(ctx.Prof.LintConfig("root-canonical-only"), "files")
-	if len(canonical) == 0 {
-		return nil
-	}
+func (r rootNameCase) CheckVault(ctx *lint.Context) []lint.Finding {
 	var out []lint.Finding
 	for _, f := range sortedFiles(ctx) {
 		if strings.Contains(f, "/") {
 			continue
 		}
-		if want := caseVariantOf(f, canonical); want != "" {
+		if want := caseVariantOf(f, r.canonical); want != "" {
 			out = append(out, finding(lint.Error, f, 0, false,
 				"root file must be spelled %q (renames break links; fix manually)", want))
 		}
