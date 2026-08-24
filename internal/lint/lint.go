@@ -197,6 +197,24 @@ func instantiate(prof *profile.Profile, overrides map[string]map[string]any, onl
 			return nil, nil, fmt.Errorf("unknown lint rule %q (see `pkms lint --help` or docs/LINT-RULES.md)", o)
 		}
 	}
+	// Every config table must name a registered rule — a typo'd or stale
+	// id would otherwise be silently inert on every surface (lint, --fix,
+	// doctor's lint-config check), the "nothing to do" green nobody
+	// notices (issue #46; SPEC §35). Checked independently of the --rules
+	// filter so all three surfaces agree by construction; sorted so the
+	// error is deterministic.
+	var unknown []string
+	for _, tables := range []map[string]map[string]any{prof.Lint, overrides} {
+		for id := range tables {
+			if _, ok := registry[id]; !ok {
+				unknown = append(unknown, id)
+			}
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return nil, nil, fmt.Errorf("config for unknown lint rule %q (see docs/LINT-RULES.md)", unknown[0])
+	}
 	wanted := func(id string) bool {
 		if len(only) == 0 {
 			return true

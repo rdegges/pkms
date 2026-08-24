@@ -305,3 +305,18 @@ func TestDoctorExitCodeIsOneWhenTheLintConfigIsBroken(t *testing.T) {
 	require.Equal(t, 1, doctorCode,
 		"doctor reports failures with exit 1; 0 would certify a dead linter")
 }
+
+// A config table naming no registered rule fails doctor's lint-config
+// check, and the detail names the offending id so the user can find the
+// typo'd table (issue #46; SPEC §35).
+func TestDoctorFailsOnAnUnknownRuleIdInVaultConfig(t *testing.T) {
+	setupLintVault(t, map[string]string{"Areas/Personal/note.md": "x\n"})
+	appendVaultLintOverride(t, os.Getenv("PKMS_CONFIG"),
+		"orphan-note", `severity = "warning"`) // singular typo of orphan-notes
+
+	out, err := runCLI(t, "doctor")
+	require.Error(t, err, "a typo'd rule id must not be silently inert: %s", out)
+	require.Contains(t, out, "lint-config", out)
+	require.Contains(t, out, "orphan-note", "the detail must name the offending id: %s", out)
+	require.Contains(t, out, "1 failures", out)
+}

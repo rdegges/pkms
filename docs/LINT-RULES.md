@@ -37,11 +37,13 @@ Conventions:
   alternation, so such an accepted pattern silently matches nothing (pkms
   issue #38). `--fix` validates through the same path. Config validation
   runs only for the rules a run instantiates: rules disabled with
-  `enabled = false`, or excluded by `--rules`, are not validated — except
-  that config an ENABLED rule consumes is always validated, whichever
-  rule's table it lives in (root-file-name-case reads
-  root-canonical-only's `files` at construction). Profile type-scope globs
-  are validated when the profile loads.
+  `enabled = false`, or excluded by `--rules`, are not validated — with
+  two exceptions. Config an ENABLED rule consumes is always validated,
+  whichever rule's table it lives in (root-file-name-case reads
+  root-canonical-only's `files` at construction). And every config table's
+  KEY must name a registered rule on every run, regardless of scoping — a
+  typo'd or stale rule id is a config error, never silently inert (SPEC
+  §35). Profile type-scope globs are validated when the profile loads.
 
 ---
 
