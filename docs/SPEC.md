@@ -1799,9 +1799,14 @@ entry is `{file, lists, policy, severity}` and is validated when the
 profile loads — fail closed, a contract that cannot mean what its author
 wrote never loads:
 
-- `file`: required, non-empty, unique across entries. Duplicate `file`
-  values are rejected; relaxing that later (multiple contracts per file)
-  is backward-compatible, while banning it later would not be.
+- `file`: required, non-empty, unique across entries, and a clean
+  vault-relative path — not absolute, no `..` element, and equal to its
+  own `path.Clean` (no `./` prefix, no trailing `/`). An unnormalized
+  value could never designate a note when §37 looks entries up by exact
+  vault-relative key, so it is rejected while rejecting is still free.
+  Duplicate `file` values are rejected; relaxing that later (multiple
+  contracts per file) is backward-compatible, while banning it later
+  would not be.
 - `lists`: required, a syntactically valid doublestar glob
   (`ValidatePattern`, the §30-settled construction gate).
 - `policy`: required enum. `must-link-all` — every note `lists` matches

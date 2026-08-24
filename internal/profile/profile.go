@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"text/template"
 	"time"
@@ -137,15 +138,27 @@ func load(fsys fs.FS, diskPath string) (*Profile, error) {
 	// [[indexes]] entries are validated here (SPEC §36) so every layer that
 	// consumes them — profile show, the index lint enforcement — can trust
 	// each declaration without re-checking. Fail closed: a contract that
-	// cannot mean what its author wrote never loads.
+	// cannot mean what its author wrote never loads. Errors carry the same
+	// source context the decode errors above do.
+	src := "profile.toml"
+	if diskPath != "" {
+		src = filepath.Join(diskPath, "profile.toml")
+	}
 	seenIndex := map[string]bool{}
 	for i, ix := range p.Indexes {
-		where := fmt.Sprintf("[[indexes]] entry %d", i+1)
+		where := fmt.Sprintf("%s: [[indexes]] entry %d", src, i+1)
 		if ix.File != "" {
-			where = fmt.Sprintf("[[indexes]] %q", ix.File)
+			where = fmt.Sprintf("%s: [[indexes]] %q", src, ix.File)
 		}
 		if ix.File == "" {
 			return nil, fmt.Errorf("%s: file is required", where)
+		}
+		// The enforcement layer (§37) looks notes up by exact vault-relative
+		// key, so a file that is absolute, escapes the vault, or is not its
+		// own path.Clean could never designate a note — a contract that can
+		// never be checked must not load.
+		if path.IsAbs(ix.File) || ix.File != path.Clean(ix.File) || hasDotDotElement(ix.File) {
+			return nil, fmt.Errorf(`%s: file must be a clean vault-relative path (no leading "/" or "./", no "..", no trailing "/")`, where)
 		}
 		if ix.Lists == "" {
 			return nil, fmt.Errorf("%s: lists is required", where)
@@ -252,6 +265,18 @@ func (p *Profile) TypeOf(relPath string, fields map[string]any) string {
 		return t.Name
 	}
 	return ""
+}
+
+// hasDotDotElement reports whether any slash-separated element is "..".
+// path.Clean keeps a leading "../" run, so equality with Clean alone does
+// not catch vault escapes.
+func hasDotDotElement(p string) bool {
+	for _, el := range strings.Split(p, "/") {
+		if el == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // matchAny reports whether relPath matches any scope glob. Callers must

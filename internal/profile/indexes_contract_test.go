@@ -83,35 +83,57 @@ func TestIndexEntryWithoutFileIsNamedByPosition(t *testing.T) {
 // the change promised — see the tester report. It matters because the
 // enforcement side looks the index up by exact key (ctx.Ix.Notes[file] over
 // vault-relative note paths), so every spelling below designates no note.
-func TestIndexFileIsAcceptedVerbatimWithoutNormalization(t *testing.T) {
+// `file` must be a clean vault-relative path: not absolute, no ".." element,
+// and equal to its own path.Clean. Anything else could never designate a
+// note once §37 looks entries up by exact vault-relative key — a contract
+// that can never be checked must not load (§36 gate condition).
+func TestIndexFileMustBeACleanVaultRelativePath(t *testing.T) {
 	for label, file := range map[string]string{
-		"parent traversal":  "../../etc/passwd",
-		"absolute path":     "/etc/passwd",
-		"leading dot slash": "./Projects.md",
-		"trailing slash":    "Projects.md/",
-		"whitespace only":   "   ",
-		"backslashes":       `Projects\Projects.md`,
+		"parent traversal":   "../../etc/passwd",
+		"dotdot mid-path":    "Projects/../Projects.md",
+		"bare dotdot prefix": "../Projects.md",
+		"absolute path":      "/etc/passwd",
+		"leading dot slash":  "./Projects.md",
+		"trailing slash":     "Projects.md/",
+	} {
+		t.Run(label, func(t *testing.T) {
+			_, err := loadManifest(t, indexManifest([]Index{{
+				File: file, Lists: "Projects/**/*.md",
+				Policy: "must-link-all", Severity: "warning",
+			}}))
+			require.Error(t, err, "an unnormalized file must be rejected at load")
+			require.ErrorContains(t, err, "vault-relative")
+		})
+	}
+}
+
+// The rule's deliberate bounds, pinned: shapes that ARE clean relative
+// paths load even when they look odd — a whitespace or backslash basename
+// is legal on-disk content, and rejecting it would guess at filesystems.
+func TestOddButCleanIndexFilesStillLoad(t *testing.T) {
+	for label, file := range map[string]string{
+		"whitespace only": "   ",
+		"backslashes":     `Projects\Projects.md`,
 	} {
 		t.Run(label, func(t *testing.T) {
 			p, err := loadManifest(t, indexManifest([]Index{{
 				File: file, Lists: "Projects/**/*.md",
 				Policy: "must-link-all", Severity: "warning",
 			}}))
-			require.NoError(t, err, "observed: the gate does not constrain `file`")
-			require.Equal(t, file, p.Indexes[0].File, "and stores it verbatim")
+			require.NoError(t, err)
+			require.Equal(t, file, p.Indexes[0].File)
 		})
 	}
 }
 
-// Uniqueness is exact-string, so two spellings of one file both load. Pinned
-// as observed behavior: after the enforcement swap each entry is checked
-// independently, so the unresolvable spelling reports the whole listed tree
-// as uncataloged.
+// Uniqueness is exact-string over CLEAN paths. The path-shape gate removes
+// the alternate spellings of one file (./x, x/), so the remaining
+// non-colliding pairs really are distinct clean paths — case and trailing
+// space differences are different files as far as the vault key goes.
 func TestDuplicateIndexFilesAreDetectedByExactStringOnly(t *testing.T) {
 	for label, second := range map[string]string{
-		"dot-slash spelling": "./Projects.md",
-		"case difference":    "projects.md",
-		"trailing space":     "Projects.md ",
+		"case difference": "projects.md",
+		"trailing space":  "Projects.md ",
 	} {
 		t.Run(label, func(t *testing.T) {
 			p, err := loadManifest(t, indexManifest([]Index{
