@@ -229,7 +229,7 @@ func TestEnabledIsRejectedByTheEngineBeforeTheFactoryReadsIt(t *testing.T) {
 				map[string]map[string]any{id: {"enabled": "true"}}, []string{id})
 			require.Error(t, err)
 			require.Equal(t,
-				`rule `+id+`: enabled: got string (true), want a boolean`, err.Error(),
+				`rule `+id+`: enabled: got string ("true"), want a boolean`, err.Error(),
 				"the engine's message, not a factory's — the factory is never reached")
 		})
 	}

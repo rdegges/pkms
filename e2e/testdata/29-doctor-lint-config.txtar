@@ -1,0 +1,63 @@
+# Phase 29: `pkms doctor` lint-config check (SPEC §34). A vault whose lint
+# config cannot instantiate its rules is a vault whose linter is dead, so
+# doctor must fail it and name the rule and key — not report a healthy
+# setup. The break here lives in the PROFILE's own [lint.*] table, the
+# source no other doctor check inspects (profile load only validates type
+# scope globs).
+
+mkdir $WORK/prof
+cp good.toml $WORK/prof/profile.toml
+exec pkms init --path $WORK/vault --profile $WORK/prof
+
+# Green: the check names what it proved, and lint agrees by running.
+exec pkms doctor
+stdout 'lint-config'
+stdout 'every lint rule instantiates'
+stdout '0 failures'
+exec pkms lint
+stdout 'clean: no findings'
+
+# Break the profile's lint table behind the user's back.
+cp broken.toml $WORK/prof/profile.toml
+
+# `pkms lint` refuses to run and says why (exit 2, not a clean report).
+! exec pkms lint
+stderr 'orphan-notes'
+stderr 'enabled'
+! stdout 'clean'
+
+# doctor must reach the same verdict, naming the rule and the key so the
+# user can find the table. The profile itself still loads, so lint-config
+# is the check that has to catch this.
+! exec pkms doctor
+stdout 'lint-config'
+stdout 'orphan-notes'
+stdout '1 failures'
+
+! exec pkms doctor --json
+stdout '"name": "lint-config"'
+stdout '"status": "fail"'
+
+-- good.toml --
+schema_version = 1
+name = "e2e-lintcfg"
+scaffold = ["Areas"]
+
+[[types]]
+name = "area"
+scope = ["Areas/**"]
+
+[lint.orphan-notes]
+enabled = false
+
+-- broken.toml --
+schema_version = 1
+name = "e2e-lintcfg"
+scaffold = ["Areas"]
+
+[[types]]
+name = "area"
+scope = ["Areas/**"]
+
+[lint.orphan-notes]
+enabled = "yes"
