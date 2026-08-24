@@ -46,26 +46,14 @@ func init() {
 		}
 		return countDrift{file: file, key: key, mode: "files", glob: counts}, nil
 	})
-	lint.Register("recipes-index-links-complete", func(cfg map[string]any) (any, error) {
-		file, lists, err := cfgIndexPair(cfg)
-		if err != nil || file == "" {
-			return nil, err
-		}
-		return indexComplete{file: file, lists: lists, sev: lint.Error, reverse: true}, nil
-	})
-	lint.Register("resources-cataloged-in-index", func(cfg map[string]any) (any, error) {
-		file, lists, err := cfgIndexPair(cfg)
-		if err != nil || file == "" {
-			return nil, err
-		}
-		return indexComplete{file: file, lists: lists, sev: lint.Warning}, nil
-	})
-	lint.Register("projects-linked-from-master", func(cfg map[string]any) (any, error) {
-		file, lists, err := cfgIndexPair(cfg)
-		if err != nil || file == "" {
-			return nil, err
-		}
-		return indexComplete{file: file, lists: lists, sev: lint.Warning}, nil
+	lint.Register("index-complete", func(cfg map[string]any) (any, error) {
+		// The contracts live in the profile's [[indexes]] declarations
+		// (SPEC §36/§37), pre-validated at load — this factory reads
+		// nothing from its own table. `enabled`/`severity` are handled
+		// generically by the engine; note a rule-level severity override
+		// flattens EVERY entry's declared severity (documented granularity
+		// loss, §37).
+		return indexContracts{}, nil
 	})
 	lint.Register("index-no-inventory", func(cfg map[string]any) (any, error) {
 		file, err := lint.CfgString(cfg, "file", "")
@@ -193,27 +181,6 @@ func init() {
 	})
 }
 
-// cfgIndexPair reads the file/lists pair the index rules share and
-// validates the lists glob. file == "" (with lists unset too) means
-// unconfigured.
-func cfgIndexPair(cfg map[string]any) (file, lists string, err error) {
-	file, err = lint.CfgString(cfg, "file", "")
-	if err != nil {
-		return "", "", err
-	}
-	lists, err = lint.CfgString(cfg, "lists", "")
-	if err != nil {
-		return "", "", err
-	}
-	if file == "" || lists == "" {
-		return "", "", nil
-	}
-	if err := validGlobs("lists", []string{lists}); err != nil {
-		return "", "", err
-	}
-	return file, lists, nil
-}
-
 // ---- count drift (Action Items / Recipes) -----------------------------------
 
 var checkboxRe = regexp.MustCompile(`(?m)^\s*- \[[ xX]\] `)
@@ -279,26 +246,38 @@ func (r countDrift) Fix(ctx *lint.Context, n *vault.Note, f lint.Finding) (*lint
 
 // ---- index completeness (master catalogs) -------------------------------------
 
-type indexComplete struct {
-	file    string
-	lists   string
-	sev     lint.Severity
-	reverse bool // also: every index link must resolve (recipes)
+// indexContracts enforces every [[indexes]] declaration (SPEC §37). Each
+// entry is checked independently at its own declared severity; the entries
+// were validated at profile load (§36), so this reads them without
+// re-checking. Zero declared entries is a decided vacuous pass (§37).
+type indexContracts struct{}
+
+func (indexContracts) CheckVault(ctx *lint.Context) []lint.Finding {
+	var out []lint.Finding
+	for _, ix := range ctx.Prof.Indexes {
+		out = append(out, checkIndexContract(ctx, ix.File, ix.Lists,
+			lint.Severity(ix.Severity), ix.Policy == "must-link-all-and-resolve")...)
+	}
+	return out
 }
 
-func (r indexComplete) CheckVault(ctx *lint.Context) []lint.Finding {
+// checkIndexContract is one contract's check. reverse additionally requires
+// every wikilink in the index to resolve (policy must-link-all-and-resolve).
+// Finding messages are unchanged from the retired per-index rules: the §37
+// parity ruling is that the swap changed rule identity only.
+func checkIndexContract(ctx *lint.Context, file, lists string, sev lint.Severity, reverse bool) []lint.Finding {
 	var inScope []string
 	for _, p := range ctx.Ix.NotePaths() {
-		if p != r.file && matchAnyGlob([]string{r.lists}, p) {
+		if p != file && matchAnyGlob([]string{lists}, p) {
 			inScope = append(inScope, p)
 		}
 	}
-	idx := ctx.Ix.Notes[r.file]
+	idx := ctx.Ix.Notes[file]
 	if idx == nil {
 		if len(inScope) == 0 {
 			return nil // nothing to catalog and no index: fine (fresh vault)
 		}
-		return []lint.Finding{finding(r.sev, r.file, 0, false,
+		return []lint.Finding{finding(sev, file, 0, false,
 			"index file missing (%d note(s) to catalog)", len(inScope))}
 	}
 	// Resolve every link in the index once.
@@ -309,15 +288,15 @@ func (r indexComplete) CheckVault(ctx *lint.Context) []lint.Finding {
 		for _, m := range matches {
 			linked[m] = true
 		}
-		if r.reverse && len(matches) == 0 && l.Kind == vault.KindWikilink {
-			out = append(out, finding(r.sev, r.file, l.Line, false,
+		if reverse && len(matches) == 0 && l.Kind == vault.KindWikilink {
+			out = append(out, finding(sev, file, l.Line, false,
 				"index links [[%s]] but no such note exists", l.Target))
 		}
 	}
 	for _, p := range inScope {
 		if !linked[p] {
-			out = append(out, finding(r.sev, p, 0, false,
-				"not cataloged in %s", r.file))
+			out = append(out, finding(sev, p, 0, false,
+				"not cataloged in %s", file))
 		}
 	}
 	return out

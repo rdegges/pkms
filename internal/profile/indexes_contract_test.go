@@ -8,81 +8,10 @@ import (
 )
 
 // Companion to indexes_test.go. Those tests pin the §36 gate's accept/reject
-// decision; these pin what the gate does NOT decide, and the coupling that
-// makes the declarations worth validating at all.
+// decision; these pin what the gate does NOT decide. (The mirror test that
+// held [[indexes]] and the retired [lint.*] index tables together retired
+// with those tables at §37 — the declarations are now the only copy.)
 
-// The declarations are inert today — the [lint.*] index tables are still the
-// enforcement source (§36 defers that to §37). Two copies of the same
-// contract drift silently, and the drift only becomes visible after the
-// enforcement swap, as a behavior change nobody wrote. Pin the copies to
-// each other now.
-//
-// The policy/severity column is the semantics each shipped rule hard-codes
-// in internal/lint/rules/vaultwide.go (indexComplete{sev, reverse}); the
-// profile package cannot import lint to read it, which is the same cycle
-// that forced the severity literals to be duplicated.
-func TestRdeggesIndexDeclarationsMatchTheLintTablesTheyMirror(t *testing.T) {
-	want := map[string]struct{ policy, severity string }{
-		"projects-linked-from-master":  {"must-link-all", "warning"},
-		"resources-cataloged-in-index": {"must-link-all", "warning"},
-		"recipes-index-links-complete": {"must-link-all-and-resolve", "error"},
-	}
-
-	p, err := Load("rdegges")
-	require.NoError(t, err)
-
-	byFile := map[string]Index{}
-	for _, ix := range p.Indexes {
-		byFile[ix.File] = ix
-	}
-	require.Len(t, byFile, len(want),
-		"one [[indexes]] entry per shipped index rule — an extra or missing "+
-			"declaration changes behavior the moment enforcement reads these")
-
-	for id, sem := range want {
-		cfg := p.Lint[id]
-		require.NotEmpty(t, cfg, "the shipped %s rule table must exist", id)
-
-		file, _ := cfg["file"].(string)
-		lists, _ := cfg["lists"].(string)
-		require.NotEmpty(t, file, "%s: table declares no file", id)
-		require.NotEmpty(t, lists, "%s: table declares no lists glob", id)
-
-		ix, ok := byFile[file]
-		require.Truef(t, ok, "%s enforces %q but no [[indexes]] entry declares it", id, file)
-		require.Equalf(t, lists, ix.Lists,
-			"%s: the enforced glob and the declared glob disagree", id)
-		require.Equalf(t, sem.policy, ix.Policy,
-			"%s: the rule's reverse-resolution semantics and the declared policy disagree", id)
-		require.Equalf(t, sem.severity, ix.Severity,
-			"%s: the rule's severity and the declared severity disagree", id)
-
-		// Where the table also states a severity override, all three must agree.
-		if raw, present := cfg["severity"]; present {
-			require.Equalf(t, sem.severity, raw, "%s: table severity override drifted", id)
-		}
-	}
-}
-
-// The other half of the locator promise: an entry with no `file` is named by
-// its 1-based position, so a multi-entry profile still says WHICH entry.
-// indexes_test.go pins the by-file half; without this one the positional
-// branch could number from zero, or from the wrong loop variable, unnoticed.
-func TestIndexEntryWithoutFileIsNamedByPosition(t *testing.T) {
-	_, err := loadManifest(t, indexManifest([]Index{
-		{File: "Projects.md", Lists: "Projects/**", Policy: "must-link-all", Severity: "warning"},
-		{File: "index.md", Lists: "Resources/**", Policy: "must-link-all", Severity: "warning"},
-		{Lists: "Recipes/*.md", Policy: "must-link-all", Severity: "error"},
-	}))
-	require.ErrorContains(t, err, "entry 3", "the third entry is entry 3, not entry 2")
-	require.ErrorContains(t, err, "file is required")
-}
-
-// The gate treats `file` as an opaque string: no normalization, no
-// vault-relative constraint. Pinned as OBSERVED behavior, not as a contract
-// the change promised — see the tester report. It matters because the
-// enforcement side looks the index up by exact key (ctx.Ix.Notes[file] over
-// vault-relative note paths), so every spelling below designates no note.
 // `file` must be a clean vault-relative path: not absolute, no ".." element,
 // and equal to its own path.Clean. Anything else could never designate a
 // note once §37 looks entries up by exact vault-relative key — a contract

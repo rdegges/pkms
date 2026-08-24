@@ -76,35 +76,37 @@ func TestKnownGap_CommaClassInAlternationSilentlyMatchesNothing(t *testing.T) {
 }
 
 // GAP (issue #38): the same silent no-match on the glob-configured scalar
-// keys, pinned so the gap is not read as one rule's quirk. `lists`/`counts`
-// drive index-completeness and count-drift; a scope that selects nothing
-// turns those rules off. Invert when #38 closes, do not delete.
+// keys, pinned so the gap is not read as one rule's quirk. `counts` drives
+// count-drift (and [[indexes]] `lists` drives index contracts, validated
+// at profile load with the same ValidatePattern gate); a scope that
+// selects nothing turns the check off. Invert when #38 closes, do not
+// delete.
 func TestKnownGap_CommaClassInAlternationEmptiesScalarGlobKeys(t *testing.T) {
 	const recipe = "Resources/Personal/Recipes/Soup.md"
 	const glob = "{[a,b]x.md," + recipe + "}"
 	require.True(t, doublestar.ValidatePattern(glob), "premise: construction accepts it")
 
 	ix, prof := buildVaultWith(t, "rdegges", map[string]string{
-		// An index that lists nothing, so every recipe the glob selects is a
-		// finding. With a working glob the count is 1; with a silent
-		// no-match it is 0.
+		// recipe_count declares 0; one real recipe exists. With a working
+		// counts glob the drift (0 vs 1) is a finding; with a silent
+		// no-match the count is 0 and the rule reports clean.
 		"Resources/Personal/Recipes/Recipes.md": "---\nrecipe_count: 0\n---\n# Recipes\n",
 		recipe:                                  "---\ntitle: Soup\n---\nbody\n",
 	})
 
 	base := map[string]any{"file": "Resources/Personal/Recipes/Recipes.md"}
 	literal, err := lint.Run(ix, prof, map[string]map[string]any{
-		"recipes-index-links-complete": {"file": base["file"], "lists": recipe},
-	}, []string{"recipes-index-links-complete"})
+		"recipes-count-drift": {"file": base["file"], "counts": recipe},
+	}, []string{"recipes-count-drift"})
 	require.NoError(t, err)
 	require.NotEmptyf(t, literal,
-		"premise: a literal glob makes the uncatalogued recipe a finding: %+v", literal)
+		"premise: a literal counts glob makes the drift a finding: %+v", literal)
 
 	got, err := lint.Run(ix, prof, map[string]map[string]any{
-		"recipes-index-links-complete": {"file": base["file"], "lists": glob},
-	}, []string{"recipes-index-links-complete"})
+		"recipes-count-drift": {"file": base["file"], "counts": glob},
+	}, []string{"recipes-count-drift"})
 	require.NoError(t, err, "GAP: the divergent glob is accepted, not rejected")
 	require.Emptyf(t, got,
-		"GAP: the glob names %q in a literal alternation branch but selects "+
+		"GAP: the glob names %q in a literal alternation branch but counts "+
 			"nothing, so the rule reports clean (issue #38): %+v", recipe, got)
 }

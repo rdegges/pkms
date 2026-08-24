@@ -1829,3 +1829,35 @@ rejected by TOML decode itself (string-typed struct fields), before this
 gate runs. Enforcement — deriving the index lint checking from these
 entries — is §37's change, not this one; through §36 the `[lint.*]` index
 tables remain the enforcement source.
+
+## 37. Index enforcement derives from `[[indexes]]` (post-v0.6.0; issue #36)
+
+Amends §12's rule catalog. One generic VaultRule, **`index-complete`**,
+enforces every §36-validated `[[indexes]]` declaration; the per-index rule
+ids `resources-cataloged-in-index`, `projects-linked-from-master`, and
+`recipes-index-links-complete` are retired, along with their `[lint.*]`
+file/lists tables (the duplication issue #36 existed to remove). A config
+table still naming a retired id fails the run via §35's unknown-id gate —
+the loud migration surface; docs/LINT-RULES.md carries the mapping.
+
+Green sentence — *every declared index contract holds: each note a
+contract's `lists` glob matches is wikilinked from its `file`, and (under
+`must-link-all-and-resolve`) every wikilink in that file resolves*. Zero
+declared entries = zero contracts = pass: a decided vacuous branch, stated
+out loud because the `para` profile hits it on day one — an empty
+declaration list means the profile author asked for nothing, not that
+checking failed.
+
+Mechanics: the rule's factory reads nothing from its own config table —
+`enabled`/`severity` are handled generically by the engine, and the
+contracts come from `ctx.Prof.Indexes`, pre-validated at load (§36).
+Findings carry each entry's declared severity and the exact message
+formats of the retired rules (the migration ruling: the swap changes rule
+identity only, never a judgment about the vault). Granularity is
+deliberately coarser than three ids: `--rules index-complete` selects all
+contracts, `enabled = false` disables all, and a rule-level `severity`
+override flattens every entry's declared severity — per-contract changes
+belong in the profile's `[[indexes]]`, via eject when the profile is a
+builtin. The `orphan-notes` table's never-read `catalogs` key is deleted
+as part of this amendment (pure subtraction; whether orphan detection
+should derive from `[[indexes]]` is a filed follow-up, not ruled here).

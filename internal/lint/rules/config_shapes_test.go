@@ -166,18 +166,18 @@ func fixableTopicsFinding(t *testing.T) (*vault.Index, *profile.Profile, lint.Fi
 // These were the KnownGap pins from the #32 gate; the gaps are now closed,
 // so they assert the desired behavior.
 
-// A scalar-valued option (`file`, `lists`, `dir`, `key`, `section`, ...)
+// A scalar-valued option (`file`, `counts`, `dir`, `key`, `section`, ...)
 // written with the wrong type must fail the run — for rules that return nil
 // on an empty `file`, dropping it silently DISABLED the check.
 func TestWrongTypedScalarOptionFailsTheRun(t *testing.T) {
 	ix, prof := buildVaultWith(t, "rdegges", map[string]string{
-		"Resources/Personal/Recipes/Recipes.md":     "# Recipes\n",
-		"Resources/Personal/Recipes/Uncataloged.md": "---\ntype: recipe\n---\nx\n",
+		"Resources/Personal/Recipes/Recipes.md": "---\nrecipe_count: 0\n---\n# Recipes\n",
+		"Resources/Personal/Recipes/Soup.md":    "---\ntitle: Soup\n---\nx\n",
 	})
-	// Premise: with the profile's own config the rule reports the gap.
-	fs, err := lint.Run(ix, prof, nil, []string{"recipes-index-links-complete"})
+	// Premise: with the profile's own config the rule reports the drift.
+	fs, err := lint.Run(ix, prof, nil, []string{"recipes-count-drift"})
 	require.NoError(t, err)
-	require.Len(t, fs, 1, "premise: the uncataloged recipe is a finding: %+v", fs)
+	require.Len(t, fs, 1, "premise: the count drift is a finding: %+v", fs)
 
 	for label, tc := range map[string]struct {
 		cfg map[string]any
@@ -185,16 +185,16 @@ func TestWrongTypedScalarOptionFailsTheRun(t *testing.T) {
 	}{
 		"file as int":  {map[string]any{"file": 42}, "file"},
 		"file as list": {map[string]any{"file": []any{"Resources/Personal/Recipes/Recipes.md"}}, "file"},
-		"lists as list": {map[string]any{"file": "Resources/Personal/Recipes/Recipes.md",
-			"lists": []any{"Resources/Personal/Recipes/*.md"}}, "lists"},
+		"counts as list": {map[string]any{"file": "Resources/Personal/Recipes/Recipes.md",
+			"counts": []any{"Resources/Personal/Recipes/*.md"}}, "counts"},
 	} {
 		t.Run(label, func(t *testing.T) {
 			_, err := lint.Run(ix, prof,
-				map[string]map[string]any{"recipes-index-links-complete": tc.cfg},
-				[]string{"recipes-index-links-complete"})
+				map[string]map[string]any{"recipes-count-drift": tc.cfg},
+				[]string{"recipes-count-drift"})
 			require.Error(t, err, "a wrong-typed scalar option must fail the run")
 			require.Contains(t, err.Error(), tc.key, "the error must name the key")
-			require.Contains(t, err.Error(), "recipes-index-links-complete",
+			require.Contains(t, err.Error(), "recipes-count-drift",
 				"the error must name the rule")
 		})
 	}

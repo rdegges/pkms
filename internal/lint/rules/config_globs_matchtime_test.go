@@ -62,7 +62,6 @@ func TestDivergentGlobEvaluatesIdenticallyOnEveryVault(t *testing.T) {
 		"non-markdown-in-note-folders": {"scopes": []any{divergentGlob}},
 		"orphan-notes":                 {"scopes": []any{divergentGlob}},
 		"recipes-count-drift":          {"file": "Recipes.md", "counts": divergentGlob},
-		"recipes-index-links-complete": {"file": "Recipes.md", "lists": divergentGlob},
 	} {
 		t.Run(rule, func(t *testing.T) {
 			_, err := lint.Run(empty, prof, map[string]map[string]any{rule: cfg}, []string{rule})
