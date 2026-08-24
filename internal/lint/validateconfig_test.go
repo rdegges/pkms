@@ -104,13 +104,12 @@ func TestValidateConfigAgreesWithLintRunOnEveryConfigShape(t *testing.T) {
 			agreementOnly: true,
 		},
 		{
-			// Both surfaces ignore a table naming no registered rule. Pinned
-			// as agreement, NOT as an endorsement: a typo'd rule id in
-			// config is silently inert on both paths (pre-existing, #37 did
-			// not change it).
-			name:          "table for an unregistered rule id",
-			overrides:     map[string]map[string]any{"no-such-rule": {"severity": "warning"}},
-			agreementOnly: true,
+			// A table naming no registered rule is a config error on both
+			// surfaces — a typo'd id was silently inert before (#46), the
+			// "nothing to do" green nobody notices.
+			name:      "table for an unregistered rule id",
+			overrides: map[string]map[string]any{"no-such-rule": {"severity": "warning"}},
+			wantErr:   true,
 		},
 		{
 			name:      "override re-enables a disabled rule carrying broken config",

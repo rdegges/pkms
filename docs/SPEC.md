@@ -1761,9 +1761,10 @@ scope — the check must be free of false positives.
 ## 34. Doctor check `lint-config` (post-v0.6.0; issue #37)
 
 Amends §11's doctor list. Green sentence — *the vault's merged lint config
-(profile `[lint.*]` tables + `[vaults.lint]` overrides) instantiates every
-registered rule cleanly, so a default `pkms lint` run cannot exit 2 on
-config*. It runs the exact validation path `pkms lint` runs before
+(profile `[lint.*]` tables + `[vaults.lint]` overrides) names only
+registered rules and instantiates every registered rule cleanly, so a
+default `pkms lint` run cannot exit 2 on config* (the naming half added by
+§35). It runs the exact validation path `pkms lint` runs before
 reporting (`lint.ValidateConfig` = full-run instantiate, findings
 discarded), so the two can never disagree about what "valid config" means.
 A hit **fails** doctor, naming the rule and the offending key/pattern —
@@ -1775,3 +1776,16 @@ skipped (absent, not green) when the profile itself fails to load — the
 command's own convention: the same broken config makes `pkms lint` exit 2
 (config error) and `pkms doctor` exit 1 (a failed check) — monitoring
 authors must not wait for a 2 from doctor.
+
+## 35. Config tables must name registered lint rules (post-v0.6.0; issue #46)
+
+A `[lint.<id>]` table in a profile or a `[vaults.lint.<id>]` override table
+whose `<id>` names no registered rule is a config error (`pkms lint` exit
+2; doctor `lint-config` fails), never silently inert — a typo'd or stale
+id previously configured nothing on every surface, the "nothing to do"
+green nobody notices (§15). The check runs in the engine's one
+instantiation path, before and independently of `--rules` scoping, so
+`lint`, `lint --fix`, and doctor agree by construction; unknown ids are
+reported deterministically (sorted, first named). This is the migration
+surface for future rule renames/removals: a removed id fails loudly with a
+pointer to docs/LINT-RULES.md rather than degrading to a no-op.
