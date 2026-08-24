@@ -1771,4 +1771,7 @@ doctor already failed the same error class inside a profile (schema
 compile, scope globs), and the two config sources must be treated the
 same (§15 gates fail closed). The check requires a loadable profile and is
 skipped (absent, not green) when the profile itself fails to load — the
-`profile` failure already colors that run red.
+`profile` failure already colors that run red. Exit codes differ by each
+command's own convention: the same broken config makes `pkms lint` exit 2
+(config error) and `pkms doctor` exit 1 (a failed check) — monitoring
+authors must not wait for a 2 from doctor.

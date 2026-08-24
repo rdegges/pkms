@@ -121,7 +121,7 @@ func CfgStrings(cfg map[string]any, key string) ([]string, error) {
 		for i, e := range xs {
 			s, ok := e.(string)
 			if !ok {
-				return nil, fmt.Errorf("%s[%d]: got %T (%v), want string", key, i, e, e)
+				return nil, fmt.Errorf("%s[%d]: got %T (%q), want string", key, i, e, e)
 			}
 			out = append(out, s)
 		}
@@ -141,7 +141,7 @@ func CfgString(cfg map[string]any, key, def string) (string, error) {
 	}
 	s, ok := raw.(string)
 	if !ok {
-		return "", fmt.Errorf("%s: got %T (%v), want a string", key, raw, raw)
+		return "", fmt.Errorf("%s: got %T (%q), want a string", key, raw, raw)
 	}
 	return s, nil
 }
@@ -160,7 +160,7 @@ func CfgInt(cfg map[string]any, key string, def int) (int, error) {
 	case int:
 		return v, nil
 	}
-	return 0, fmt.Errorf("%s: got %T (%v), want an integer", key, raw, raw)
+	return 0, fmt.Errorf("%s: got %T (%q), want an integer", key, raw, raw)
 }
 
 // CfgBool reads a boolean config value; a non-bool is a config error
@@ -172,7 +172,7 @@ func CfgBool(cfg map[string]any, key string, def bool) (bool, error) {
 	}
 	b, ok := raw.(bool)
 	if !ok {
-		return false, fmt.Errorf("%s: got %T (%v), want a boolean", key, raw, raw)
+		return false, fmt.Errorf("%s: got %T (%q), want a boolean", key, raw, raw)
 	}
 	return b, nil
 }
@@ -234,7 +234,7 @@ func instantiate(prof *profile.Profile, overrides map[string]map[string]any, onl
 		if raw, ok := cfg["severity"]; ok {
 			s, isStr := raw.(string)
 			if !isStr || (s != string(Error) && s != string(Warning)) {
-				return nil, nil, fmt.Errorf(`rule %s: severity: got %T (%v), want "error" or "warning"`, id, raw, raw)
+				return nil, nil, fmt.Errorf(`rule %s: severity: got %T (%q), want "error" or "warning"`, id, raw, raw)
 			}
 		}
 		// warning_types must name declared profile types — a typo'd type
@@ -268,6 +268,12 @@ func instantiate(prof *profile.Profile, overrides map[string]map[string]any, onl
 // reporting, so a config this accepts cannot make lint exit 2 (issue #37;
 // doctor's lint-config check).
 func ValidateConfig(prof *profile.Profile, overrides map[string]map[string]any) error {
+	// An empty registry is a cannot-evaluate posture, not a green one: a
+	// binary that registered no rules validated nothing, and saying so
+	// would be the "nothing to do" green (SPEC §15 gates fail closed).
+	if len(RuleIDs()) == 0 {
+		return fmt.Errorf("no lint rules registered: cannot validate config")
+	}
 	_, _, err := instantiate(prof, overrides, nil)
 	return err
 }

@@ -243,20 +243,13 @@ func TestDoctorLintConfigIsPerVault(t *testing.T) {
 	require.Contains(t, byVault["brokenv"].Detail, "[unclosed", out)
 }
 
-// FAILING — this is a finding, not a broken test. Doctor's report is
-// terminal-bound and this change newly routes CONFIG-SUPPLIED strings into
-// it. doctor.go's own policy is explicit twice ("untrusted bytes headed for
-// a terminal ... always printed escaped": note-text's %q, printFindings' %q
-// on paths), and the glob subtest below proves the engine already honors it
-// on one path. The severity/enabled/int paths format the offending value
-// with %v, so a config value carrying ESC reaches stdout raw and can erase
-// the failure lines above it — the exact attack the %q policy exists to
-// stop.
-//
-// The invariant asserted is wording-independent: no raw control bytes in
-// the report. Either fix satisfies it — %q for the value in the
-// lint.Cfg*/instantiate messages (one word each, matching the glob path
-// already there), or sanitizing in doctor's fail() detail.
+// Doctor's report is terminal-bound and the lint-config check routes
+// CONFIG-SUPPLIED strings into it. doctor.go's policy is explicit twice
+// ("untrusted bytes headed for a terminal ... always printed escaped"):
+// every offending value in the lint.Cfg*/instantiate messages is printed
+// %q, so a config value carrying ESC can never reach stdout raw and erase
+// the failure lines above it. The invariant asserted is
+// wording-independent: no raw control bytes in the report.
 func TestDoctorReportNeverEmitsRawControlBytesFromLintConfig(t *testing.T) {
 	// A config value carrying ESC + BEL, written through real TOML escapes.
 	// TOML \u escapes, so the source file itself stays clean text; the
