@@ -15,6 +15,7 @@ import (
 
 	"github.com/rdegges/pkms/internal/config"
 	"github.com/rdegges/pkms/internal/gitx"
+	"github.com/rdegges/pkms/internal/lint"
 	"github.com/rdegges/pkms/internal/paths"
 	"github.com/rdegges/pkms/internal/profile"
 	"github.com/rdegges/pkms/internal/vault"
@@ -94,6 +95,17 @@ func runDoctor(cmd *cobra.Command, jsonOut bool) error {
 			fail("profile", v.Name, profErr.Error())
 		} else {
 			ok("profile", v.Name, v.Profile)
+			// lint-config (issue #37): the vault's merged lint config
+			// instantiates every rule cleanly. A config `pkms lint` refuses
+			// to run with must fail doctor, not report healthy — doctor
+			// already fails the same error class in a profile, and the two
+			// config sources must be treated the same (§15 gates fail
+			// closed).
+			if err := lint.ValidateConfig(prof, v.Lint); err != nil {
+				fail("lint-config", v.Name, err.Error())
+			} else {
+				ok("lint-config", v.Name, "every lint rule instantiates")
+			}
 		}
 
 		g := gitx.Git{Dir: v.Path}

@@ -1757,3 +1757,18 @@ scope — the check must be free of false positives.
   is the local mirror; the race detector needs cgo, so it is exercised in
   CI and via Docker locally, never asserted equivalent to the CGO-off
   release build).
+
+## 34. Doctor check `lint-config` (post-v0.6.0; issue #37)
+
+Amends §11's doctor list. Green sentence — *the vault's merged lint config
+(profile `[lint.*]` tables + `[vaults.lint]` overrides) instantiates every
+registered rule cleanly, so a default `pkms lint` run cannot exit 2 on
+config*. It runs the exact validation path `pkms lint` runs before
+reporting (`lint.ValidateConfig` = full-run instantiate, findings
+discarded), so the two can never disagree about what "valid config" means.
+A hit **fails** doctor, naming the rule and the offending key/pattern —
+doctor already failed the same error class inside a profile (schema
+compile, scope globs), and the two config sources must be treated the
+same (§15 gates fail closed). The check requires a loadable profile and is
+skipped (absent, not green) when the profile itself fails to load — the
+`profile` failure already colors that run red.

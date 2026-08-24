@@ -262,6 +262,16 @@ func instantiate(prof *profile.Profile, overrides map[string]map[string]any, onl
 	return rules, cfgs, nil
 }
 
+// ValidateConfig instantiates every rule from the merged profile + override
+// config and reports the first config error, without checking any note. It
+// is exactly the validation a default `pkms lint` run performs before
+// reporting, so a config this accepts cannot make lint exit 2 (issue #37;
+// doctor's lint-config check).
+func ValidateConfig(prof *profile.Profile, overrides map[string]map[string]any) error {
+	_, _, err := instantiate(prof, overrides, nil)
+	return err
+}
+
 // Run executes all enabled rules and returns deterministically sorted
 // findings. overrides come from per-vault config; only limits rule ids.
 func Run(ix *vault.Index, prof *profile.Profile, overrides map[string]map[string]any, only []string) ([]Finding, error) {

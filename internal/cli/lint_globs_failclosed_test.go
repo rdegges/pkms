@@ -115,17 +115,12 @@ func TestMCPLintMalformedGlobIsAToolError(t *testing.T) {
 	require.NotContains(t, got, `"findings"`, "no payload may be returned: %s", got)
 }
 
-// GAP: this change validates a vault's lint config only when `pkms lint`
-// instantiates a rule. `pkms doctor` — the command a user runs to ask "is my
-// setup healthy?" — never does, so it reports zero failures for a config
-// that makes `pkms lint` refuse to run with exit 2. The asymmetry is inside
-// this change: the doctor subtest above proves doctor DOES fail a malformed
-// profile glob, so the two config sources are now treated differently.
-//
-// Pins CURRENT behavior. When doctor learns to validate vault lint config,
-// this test fails — that failure is the fix, and the test should be
-// inverted, not deleted.
-func TestKnownGap_DoctorReportsCleanWhenTheVaultsLintConfigIsBroken(t *testing.T) {
+// `pkms doctor` is the command a user runs to ask "is my setup healthy?".
+// A vault whose lint config makes `pkms lint` refuse to run with exit 2
+// must fail doctor — the flipped #37 pin. Doctor already failed the same
+// error class in a PROFILE (the subtest below proves it); the two config
+// sources are now treated the same.
+func TestDoctorFailsWhenTheVaultsLintConfigIsBroken(t *testing.T) {
 	setupLintVault(t, map[string]string{"Areas/Personal/note.md": "x\n"})
 	appendVaultLintOverride(t, os.Getenv("PKMS_CONFIG"),
 		"non-markdown-in-note-folders", `scopes = ["[unclosed"]`)
@@ -136,11 +131,48 @@ func TestKnownGap_DoctorReportsCleanWhenTheVaultsLintConfigIsBroken(t *testing.T
 	require.NotErrorIs(t, err, errFindings)
 
 	out, err := runCLI(t, "doctor")
-	require.NoError(t, err, "GAP: doctor does not notice the broken lint config: %s", out)
-	require.Contains(t, out, "0 failures",
-		"GAP: doctor certifies a vault whose linter cannot run: %s", out)
-	require.NotContains(t, out, "[unclosed",
-		"GAP: the offending pattern is never surfaced by doctor: %s", out)
+	require.Error(t, err, "doctor must not certify a vault whose linter cannot run: %s", out)
+	require.Contains(t, out, "lint-config", "the failing check must be named: %s", out)
+	require.Contains(t, out, "[unclosed", "doctor must name the offending pattern: %s", out)
+	require.Contains(t, out, "1 failures", "the broken config must count as a failure: %s", out)
+	require.Contains(t, out, "non-markdown-in-note-folders",
+		"doctor must name the rule so the user can find the table: %s", out)
+}
+
+// The same contract on the machine-readable surface, plus the green side:
+// with a healthy config (including the severity-only override shape real
+// vaults use) doctor reports the lint-config check ok.
+func TestDoctorLintConfigCheckJSONAndGreenPath(t *testing.T) {
+	setupLintVault(t, map[string]string{"Areas/Personal/note.md": "x\n"})
+
+	// Green: a severity-only override is valid config.
+	appendVaultLintOverride(t, os.Getenv("PKMS_CONFIG"),
+		"orphan-notes", `severity = "warning"`)
+	out, err := runCLI(t, "doctor")
+	require.NoError(t, err, out)
+	require.Contains(t, out, "lint-config", "the check must appear when green too: %s", out)
+	require.Contains(t, out, "0 failures", out)
+
+	// Red, via JSON: the check carries status fail and the detail.
+	appendVaultLintOverride(t, os.Getenv("PKMS_CONFIG"),
+		"frontmatter-schema", `warning_types = "person"`)
+	out, err = runCLI(t, "doctor", "--json")
+	require.Error(t, err)
+	var payload struct {
+		Checks []struct {
+			Name, Vault, Status, Detail string
+		} `json:"checks"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &payload), out)
+	found := false
+	for _, c := range payload.Checks {
+		if c.Name == "lint-config" && c.Status == "fail" {
+			found = true
+			require.Contains(t, c.Detail, "warning_types")
+			require.Contains(t, c.Detail, "frontmatter-schema")
+		}
+	}
+	require.True(t, found, "a fail-status lint-config check must be in the JSON payload: %s", out)
 }
 
 // ---- custom profiles on disk ---------------------------------------------
