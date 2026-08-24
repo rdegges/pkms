@@ -128,10 +128,11 @@ template = "templates/<name>.md"
 folder   = "<Go template>"     # placement: renders to a vault-relative dir
 filename = "<Go template>"     # renders to the basename (without .md)
 
-[[indexes]]                    # index rules — drift checked by lint
-file    = "Projects.md"        # vault-relative index file
-lists   = "Projects/**/*.md"   # doublestar glob of notes it must link
-policy  = "must-link-all"      # v1: the only policy; every match must be wikilinked from `file`
+[[indexes]]                    # index contracts — validated at load (§36)
+file     = "Projects.md"       # vault-relative index file (unique per entry)
+lists    = "Projects/**/*.md"  # doublestar glob of notes it must link
+policy   = "must-link-all"     # or "must-link-all-and-resolve" (§36)
+severity = "warning"           # required: "error" or "warning" (§36)
 ```
 
 - **Placement/filename templates** are Go `text/template` over the note's
@@ -1569,7 +1570,8 @@ ingest/capture mapping from data instead of assuming `_Inbox`/PARA names.
 - `--json` shape (the frozen contract): `name`, `description`,
   `schema_version`, `attachments`, `scaffold` (list), `root_files` (list),
   `ingest` (`{clip, asset}` type-name map), `indexes` (list of `{file,
-  lists, policy}`), and `types` — an ORDERED list (classification order is
+  lists, policy, severity}` — `severity` added by §36), and `types` — an
+  ORDERED list (classification order is
   load-bearing, §4) of `{name, scope, require_any_key, folder, filename,
   template, schema}` where `schema` is the note type's JSON Schema inlined
   **byte-faithfully** as a raw JSON value (never re-marshaled — an agent
@@ -1789,3 +1791,36 @@ instantiation path, before and independently of `--rules` scoping, so
 reported deterministically (sorted, first named). This is the migration
 surface for future rule renames/removals: a removed id fails loudly with a
 pointer to docs/LINT-RULES.md rather than degrading to a no-op.
+
+## 36. `[[indexes]]` declarations validated at load (post-v0.6.0; issue #36)
+
+Amends §4's `[[indexes]]` sketch and §32.2's `indexes` JSON shape. Each
+entry is `{file, lists, policy, severity}` and is validated when the
+profile loads — fail closed, a contract that cannot mean what its author
+wrote never loads:
+
+- `file`: required, non-empty, unique across entries. Duplicate `file`
+  values are rejected; relaxing that later (multiple contracts per file)
+  is backward-compatible, while banning it later would not be.
+- `lists`: required, a syntactically valid doublestar glob
+  (`ValidatePattern`, the §30-settled construction gate).
+- `policy`: required enum. `must-link-all` — every note `lists` matches
+  must be wikilinked from `file`. `must-link-all-and-resolve` — same, plus
+  every wikilink in `file` must resolve (the shipped recipes rule's
+  reverse semantics, now expressible per entry).
+- `severity`: required enum, `"error"` or `"warning"` (literals duplicated
+  in the profile package; it cannot import the lint package without a
+  cycle). Required rather than defaulted: the declaration is about to
+  become enforced (§37), and its author states the contract's strength.
+  The shipped `para` profile declares no entries, so this costs nothing
+  there.
+
+`profile show` (§32.2) carries `severity` per entry — additive to the
+frozen JSON shape; the text rendering shows `(policy, severity)`.
+`schema_version` stays 1: a ≤v0.6.0 binary rejects a severity-carrying
+profile with a raw TOML unknown-field decode error (forward
+incompatibility accepted and stated here). Wrong-typed field values are
+rejected by TOML decode itself (string-typed struct fields), before this
+gate runs. Enforcement — deriving the index lint checking from these
+entries — is §37's change, not this one; through §36 the `[lint.*]` index
+tables remain the enforcement source.

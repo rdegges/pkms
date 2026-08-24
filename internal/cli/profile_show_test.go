@@ -174,7 +174,7 @@ func TestProfileShowHumanOutputRdegges(t *testing.T) {
 
 	require.Contains(t, out, "attachments: +", "non-empty attachments renders verbatim")
 	require.Contains(t, out, "\nindexes:\n", "profiles with index rules render the section")
-	require.Contains(t, out, "Projects.md lists Projects/{Snyk,Personal}/*.md (must-link-all)")
+	require.Contains(t, out, "Projects.md lists Projects/{Snyk,Personal}/*.md (must-link-all, warning)")
 	// canonical-root declares no schema — the human marker must say so.
 	require.Regexp(t, `canonical-root\s+folder=\s+no schema`, out)
 }
@@ -225,6 +225,7 @@ func TestProfileShowJSONSurfacesLintAndIndexes(t *testing.T) {
 	require.NotNil(t, projects, "rdegges declares a Projects.md index")
 	require.Equal(t, "Projects/{Snyk,Personal}/*.md", projects.Lists)
 	require.Equal(t, "must-link-all", projects.Policy)
+	require.Equal(t, "warning", projects.Severity, "§36: profile show carries severity")
 }
 
 // resolveShownProfile falls back to the configured vault when given neither a
