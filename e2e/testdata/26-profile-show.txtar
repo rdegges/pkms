@@ -18,11 +18,20 @@ stdout '"sha256"'
 # By name works without a configured vault too.
 exec pkms profile show rdegges --json
 stdout '"name": "rdegges"'
+# §36: every index contract reaches the agent with its strength, not just
+# its glob — policy AND severity, from the shipped binary.
+stdout '"policy": "must-link-all-and-resolve"'
+stdout '"severity": "error"'
+stdout '"severity": "warning"'
 
 # Human output is readable.
 exec pkms profile show para
 stdout 'classification order'
 stdout 'ingest: clip=clip asset=asset'
+
+# The index section names both halves of each contract.
+exec pkms profile show rdegges
+stdout 'Projects\.md lists Projects/\{Snyk,Personal\}/\*\.md \(must-link-all, warning\)'
 
 # Name AND --vault is a usage error.
 ! exec pkms profile show para --vault vault
