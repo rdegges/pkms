@@ -144,10 +144,7 @@ func TestValidGlobsAcceptedOnEveryGlobConfiguredKey(t *testing.T) {
 	}
 	listKeys := map[string]string{"orphan-notes": "scopes", "non-markdown-in-note-folders": "scopes"}
 	scalarKeys := map[string][2]string{
-		"resources-cataloged-in-index": {"index.md", "lists"},
-		"projects-linked-from-master":  {"Projects.md", "lists"},
-		"recipes-index-links-complete": {"Recipes.md", "lists"},
-		"recipes-count-drift":          {"Recipes.md", "counts"},
+		"recipes-count-drift": {"Recipes.md", "counts"},
 	}
 	for _, g := range valid {
 		t.Run(g, func(t *testing.T) {
@@ -238,7 +235,6 @@ func TestMalformedGlobFailsClosedOnAnEmptyVault(t *testing.T) {
 		"non-markdown-in-note-folders": {"scopes": []any{"[unclosed"}},
 		"orphan-notes":                 {"scopes": []any{"[unclosed"}},
 		"recipes-count-drift":          {"file": "Recipes.md", "counts": "[unclosed"},
-		"recipes-index-links-complete": {"file": "Recipes.md", "lists": "[unclosed"},
 	} {
 		t.Run(rule, func(t *testing.T) {
 			_, err := lint.Run(ix, prof, map[string]map[string]any{rule: cfg}, []string{rule})

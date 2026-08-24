@@ -474,19 +474,6 @@ Stew.
 	require.Contains(t, string(res.NewSrc), "updated: 2026-05-06", "unrelated lines untouched")
 }
 
-func TestIndexCompleteness(t *testing.T) {
-	files := cleanVault()
-	files["Projects.md"] = "# Projects\n- [[Cataloged]]\n"
-	files["Projects/Snyk/Cataloged.md"] = "---\ntype: project\ncategory: Snyk\nstatus: active\ncreated: 2026-01-01\nupdated: 2026-01-01\ndescription: x\n---\nx\n"
-	files["Projects/Snyk/Uncataloged.md"] = "---\ntype: project\ncategory: Snyk\nstatus: active\ncreated: 2026-01-01\nupdated: 2026-01-01\ndescription: x\n---\nx\n"
-	files["index.md"] = "# Index\nNav only.\n"
-	fs := run(t, files, "projects-linked-from-master")
-	m := byRule(fs)
-	require.Len(t, m["projects-linked-from-master"], 1)
-	require.Equal(t, "Projects/Snyk/Uncataloged.md", m["projects-linked-from-master"][0].Path)
-	require.Equal(t, lint.Warning, m["projects-linked-from-master"][0].Severity)
-}
-
 func TestLogRules(t *testing.T) {
 	files := cleanVault()
 	files["log.md"] = `# Log

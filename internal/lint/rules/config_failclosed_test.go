@@ -393,11 +393,8 @@ func TestMalformedScopeGlobFailsTheRun(t *testing.T) {
 func TestMalformedGlobFailsEveryGlobConfiguredRule(t *testing.T) {
 	ix, prof, _ := buildVault(t, cleanVault())
 	cases := map[string]map[string]any{
-		"orphan-notes":                 {"scopes": []any{"[unclosed"}},
-		"resources-cataloged-in-index": {"file": "index.md", "lists": "[unclosed"},
-		"projects-linked-from-master":  {"file": "Projects.md", "lists": "[unclosed"},
-		"recipes-index-links-complete": {"file": "Recipes.md", "lists": "[unclosed"},
-		"recipes-count-drift":          {"file": "Recipes.md", "counts": "[unclosed"},
+		"orphan-notes":        {"scopes": []any{"[unclosed"}},
+		"recipes-count-drift": {"file": "Recipes.md", "counts": "[unclosed"},
 	}
 	for rule, cfg := range cases {
 		t.Run(rule, func(t *testing.T) {

@@ -282,7 +282,6 @@ enabled = true
 
 [lint.orphan-notes]
 scopes = ["Projects/Snyk/*.md", "Projects/Personal/*.md", "Resources/Snyk/*.md", "Resources/Personal/*.md"]
-catalogs = ["Projects.md", "index.md", "Resources/Personal/Recipes/Recipes.md"]
 
 [lint.action-items-count-drift]
 file = "Action Items.md"
@@ -292,20 +291,6 @@ key = "total_items"
 file = "Resources/Personal/Recipes/Recipes.md"
 key = "recipe_count"
 counts = "Resources/Personal/Recipes/*.md"
-
-[lint.recipes-index-links-complete]
-file = "Resources/Personal/Recipes/Recipes.md"
-lists = "Resources/Personal/Recipes/*.md"
-
-[lint.resources-cataloged-in-index]
-severity = "warning"
-file = "index.md"
-lists = "Resources/{Snyk,Personal}/*.md"
-
-[lint.projects-linked-from-master]
-severity = "warning"
-file = "Projects.md"
-lists = "Projects/{Snyk,Personal}/*.md"
 
 [lint.index-no-inventory]
 file = "index.md"

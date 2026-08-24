@@ -18,7 +18,9 @@ Conventions:
 
 - **Severity**: `error` = documented hard rule the reference vault upholds;
   `warning` = documented soft rule, or a hard rule currently violated at scale
-  (an error would drown the first report). Severity is per-rule profile config.
+  (an error would drown the first report). Severity is per-rule profile
+  config — except index contracts, where it is per `[[indexes]]` entry
+  (SPEC §36).
 - **Fixable**: `--fix` performs only idempotent, unambiguous repairs. Fix twice
   = second run is a no-op (test invariant).
 - **Note-type detection is deterministic by path** (see the type map at the
@@ -43,7 +45,8 @@ Conventions:
   root-canonical-only's `files` at construction). And every config table's
   KEY must name a registered rule on every run, regardless of scoping — a
   typo'd or stale rule id is a config error, never silently inert (SPEC
-  §35). Profile type-scope globs are validated when the profile loads.
+  §35). Profile type-scope globs and `[[indexes]]` declarations are
+  validated when the profile loads (SPEC §36).
 
 ---
 
@@ -389,7 +392,9 @@ Conventions:
 
 ## Group D — Index / count drift (11 rules)
 
-All parametrized by the profile's `[[indexes]]` and count-field declarations.
+Index contracts are parametrized by the profile's `[[indexes]]`
+declarations (validated at load, SPEC §36; enforced by `index-complete`,
+SPEC §37); count drift by the count-field `[lint.*]` tables.
 
 ### action-items-count-drift
 - Severity: error. Scope: `Action Items.md`.
@@ -405,24 +410,29 @@ All parametrized by the profile's `[[indexes]]` and count-field declarations.
   first-run finding.)
 - Fixable: **yes** — recompute.
 
-### recipes-index-links-complete
-- Severity: error. Scope: recipe index vs recipe files.
-- Check: both directions — every recipe file wikilinked at least once from
-  the index; every recipe wikilink in the index resolves.
-- Fixable: no (section placement / removal is judgment).
-
-### resources-cataloged-in-index
-- Severity: warning (documented as mandatory, but 75/115 reference pages are
-  missing today — error would be pure noise).
-- Scope: top-level notes under `Resources/<domain>/`.
-- Check: each basename appears as a wikilink target in `index.md`.
-- Fixable: no (the catalog line is authored content).
-
-### projects-linked-from-master
-- Severity: warning (~60/107 unlinked today). Scope: project notes vs
-  `Projects.md`.
-- Check: each project basename appears as a wikilink target in `Projects.md`.
-- Fixable: no.
+### index-complete
+- One generic rule enforces EVERY `[[indexes]]` declaration (SPEC §37); it
+  replaced the per-index ids `resources-cataloged-in-index`,
+  `projects-linked-from-master`, and `recipes-index-links-complete` at
+  v0.7.0 (mapping table under Implementation mapping below).
+- Severity: per entry, from the declaration (`error`|`warning`, SPEC §36).
+  In the rdegges profile: `Projects.md` and `index.md` are warnings
+  (documented as mandatory, but 75/115 resources and ~60/107 projects were
+  unlinked at extraction — error would be pure noise); the recipe index is
+  an error.
+- Check: for each declared entry, every note its `lists` glob matches must
+  be wikilinked from `file` (a missing `file` with notes to catalog is
+  itself the finding). Policy `must-link-all-and-resolve` (the recipe
+  index) additionally requires every wikilink in `file` to resolve.
+- Zero declared entries = zero contracts = pass (a decided posture, SPEC
+  §37; the `para` profile hits it).
+- Granularity, deliberately coarser than the retired ids: `--rules
+  index-complete` selects ALL contracts (no per-contract selection); a
+  `[vaults.lint.index-complete]` `enabled = false` disables all contracts
+  at once; a rule-level `severity` override flattens every entry's declared
+  severity. To change one contract, eject the profile and edit its
+  `[[indexes]]` entry.
+- Fixable: no (the catalog line is authored content; removal is judgment).
 
 ### index-no-inventory
 - Severity: warning. Scope: `index.md`.
@@ -609,6 +619,22 @@ instantiate). Findings carry the engine rule ID; semantics are unchanged:
 - The path-dependent slice of `meeting-required-keys` (tags must contain the
   domain segment) is **`meeting-tags-domain`**.
 - `meeting-date-matches-path` also covers the daily-brief date==path check.
+- The three per-index catalog rules collapsed into **`index-complete`** at
+  v0.7.0 (SPEC §37), parametrized by the profile's `[[indexes]]`
+  declarations. A config table still naming a retired id fails the run
+  (SPEC §35). The mapping:
+
+  | retired rule id                | replaced by | contract entry (`file`) |
+  |--------------------------------|-------------|--------------------------|
+  | `resources-cataloged-in-index` | `index-complete` | `index.md` |
+  | `projects-linked-from-master`  | `index-complete` | `Projects.md` |
+  | `recipes-index-links-complete` | `index-complete` | `Resources/Personal/Recipes/Recipes.md` (policy `must-link-all-and-resolve`) |
+
+  Migrating a config means DELETING the retired `[lint.*]` table outright —
+  renaming it to `[lint.index-complete]` while keeping its `file`/`lists`
+  keys is accepted and silently configures nothing, because the rule reads
+  no keys from its table (the contracts live in `[[indexes]]`).
+
 - All other catalog rules keep their IDs 1:1.
 
 **Fixes shipped report-only in v1** (catalog said fixable; deferred on the
