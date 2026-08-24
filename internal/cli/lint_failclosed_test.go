@@ -202,6 +202,121 @@ func TestFreshVaultLintsOnEveryBuiltinProfile(t *testing.T) {
 	}
 }
 
+// SPEC §35 (issue #46): a `[vaults.lint.<id>]` table naming no registered
+// rule is a config error at the CLI, exit 2 — the same contract the
+// malformed-pattern case above pins. Exit 2 is what cron and CI read to tell
+// "your config is broken" apart from "your vault has findings".
+func TestLintExitsTwoOnAConfigTableForAnUnknownRule(t *testing.T) {
+	setupLintVault(t, map[string]string{"Areas/Personal/note.md": "x\n"})
+	appendVaultLintOverride(t, os.Getenv("PKMS_CONFIG"),
+		"orphan-note", `severity = "warning"`) // singular typo of orphan-notes
+
+	stderr := filepath.Join(t.TempDir(), "stderr")
+	fh, err := os.Create(stderr)
+	require.NoError(t, err)
+	orig := os.Stderr
+	os.Stderr = fh
+	origArgs := os.Args
+	os.Args = []string{"pkms", "lint"}
+	code := Execute()
+	os.Args = origArgs
+	os.Stderr = orig
+	require.NoError(t, fh.Close())
+
+	require.Equal(t, 2, code, "a stale rule table must exit 2, not 0 (clean) or 1 (findings)")
+	msg, err := os.ReadFile(stderr)
+	require.NoError(t, err)
+	require.Contains(t, string(msg), "orphan-note",
+		"the user must be told which table is wrong: %s", msg)
+}
+
+// A header-only `[vaults.lint.<id>]` table with no keys under it. The check
+// keys off the decoded map, so this only works if the TOML/koanf layer keeps
+// an entry for an empty table — pin that assumption here rather than let a
+// decoder upgrade turn the commonest stale-config shape back into a no-op.
+func TestLintRejectsAHeaderOnlyConfigTableForAnUnknownRule(t *testing.T) {
+	setupLintVault(t, map[string]string{"Areas/Personal/note.md": "x\n"})
+	cfgPath := os.Getenv("PKMS_CONFIG")
+	f, err := os.OpenFile(cfgPath, os.O_APPEND|os.O_WRONLY, 0o644)
+	require.NoError(t, err)
+	_, err = f.WriteString("\n  [vaults.lint.\"orphan-note\"]\n")
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+
+	cfg, err := config.Load(cfgPath)
+	require.NoError(t, err)
+	require.Contains(t, cfg.Vaults[0].Lint, "orphan-note",
+		"an empty table vanished at decode; the engine can no longer see it")
+
+	out, err := runCLI(t, "lint")
+	require.Error(t, err, "a header-only stale table was silently inert: %s", out)
+	require.NotErrorIs(t, err, errFindings)
+	require.Contains(t, err.Error(), "orphan-note")
+}
+
+// The machine-readable surface: a consumer that sees {"findings": []} treats
+// the vault as checked and clean. A stale rule id must emit no payload.
+func TestLintJSONEmitsNoPayloadOnAConfigTableForAnUnknownRule(t *testing.T) {
+	setupLintVault(t, map[string]string{"Areas/Personal/note.md": "x\n"})
+	appendVaultLintOverride(t, os.Getenv("PKMS_CONFIG"),
+		"orphan-note", `severity = "warning"`)
+
+	out, err := runCLI(t, "lint", "--json")
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errFindings,
+		"a stale rule table is a config error, not a findings exit")
+	require.NotContains(t, out, "findings", "no JSON payload may be emitted: %s", out)
+	require.False(t, json.Valid([]byte(out)) && strings.TrimSpace(out) != "",
+		"stdout must not parse as a lint payload: %s", out)
+}
+
+// SPEC §35: the check runs independently of `--rules` scoping, so all three
+// surfaces agree. A narrowed run is the one that would plausibly skip a table
+// it was never going to instantiate — and narrowed runs are what scheduled
+// jobs use.
+func TestLintRulesScopingDoesNotBypassTheUnknownRuleTableCheck(t *testing.T) {
+	setupLintVault(t, map[string]string{"Areas/Personal/note.md": "x\n"})
+	appendVaultLintOverride(t, os.Getenv("PKMS_CONFIG"),
+		"orphan-note", `severity = "warning"`)
+
+	out, err := runCLI(t, "lint", "--rules", "empty-note")
+	require.Error(t, err, "a narrowed run reported on an unvalidated config: %s", out)
+	require.NotErrorIs(t, err, errFindings)
+	require.Contains(t, err.Error(), "orphan-note")
+	require.NotContains(t, out, "clean", out)
+}
+
+// --fix writes to the vault. A stale rule table must stop the run before any
+// repair or snapshot, or --fix becomes the way to bypass the check.
+func TestLintFixMakesNoChangesWhenAConfigTableNamesAnUnknownRule(t *testing.T) {
+	const fixable = "---\nlast_met: 2026/01/02\nmeeting_count: 1\ntopics:\n  - AI\n---\nbody\n"
+	vaultDir := setupLintVault(t, map[string]string{"People/Snyk/Fixme.md": fixable})
+	appendVaultLintOverride(t, os.Getenv("PKMS_CONFIG"),
+		"orphan-note", `severity = "warning"`)
+
+	before := snapshotTree(t, vaultDir)
+	out, err := runCLI(t, "lint", "--fix")
+	require.Error(t, err, out)
+	require.NotErrorIs(t, err, errFindings)
+	require.Equal(t, before, snapshotTree(t, vaultDir),
+		"a stale rule table must abort before any repair is applied")
+}
+
+// The agent-facing surface. An agent that gets a findings payload back
+// records the vault as checked; a stale rule table must reach it as a tool
+// error naming the id.
+func TestMCPLintUnknownRuleTableIsAToolError(t *testing.T) {
+	setupLintVault(t, map[string]string{"Areas/Personal/note.md": "x\n"})
+	appendVaultLintOverride(t, os.Getenv("PKMS_CONFIG"),
+		"orphan-note", `severity = "warning"`)
+
+	cs, ctx := connectMCP(t)
+	got, isErr := callText(t, cs, ctx, "lint", map[string]any{"vault": "lintv"})
+	require.True(t, isErr, "a stale rule table must be a tool error, got: %s", got)
+	require.Contains(t, got, "orphan-note", "the agent must be told why: %s", got)
+	require.NotContains(t, got, `"findings"`, "no payload may be returned: %s", got)
+}
+
 // snapshotTree records every file's relative path and content, excluding
 // .git (whose internals churn on read).
 func snapshotTree(t *testing.T, root string) map[string]string {
