@@ -129,16 +129,21 @@ scope = ["Archive/**"]
 file = "Projects.md"
 lists = "Projects/{Snyk,Personal}/*.md"
 policy = "must-link-all"
+severity = "warning"
 
 [[indexes]]
 file = "index.md"
 lists = "Resources/{Snyk,Personal}/*.md"
 policy = "must-link-all"
+severity = "warning"
 
+# The recipes index is the strictest contract: every recipe must be listed
+# AND every listed link must resolve (the shipped recipes rule's semantics).
 [[indexes]]
 file = "Resources/Personal/Recipes/Recipes.md"
 lists = "Resources/Personal/Recipes/*.md"
-policy = "must-link-all"
+policy = "must-link-all-and-resolve"
+severity = "error"
 
 # ---- Lint configuration ------------------------------------------------------
 # Rule semantics live in docs/LINT-RULES.md; these tables only parametrize.

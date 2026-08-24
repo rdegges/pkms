@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"text/template"
 	"time"
@@ -62,11 +63,15 @@ type Type struct {
 	Filename      string   `toml:"filename"`
 }
 
-// Index declares an index-completeness contract (policy: must-link-all).
+// Index declares one index-completeness contract (SPEC §36): `file` must
+// wikilink every note `lists` matches. Policy "must-link-all-and-resolve"
+// additionally requires every link in `file` to resolve. Entries are
+// validated at load.
 type Index struct {
-	File   string `toml:"file"`
-	Lists  string `toml:"lists"`
-	Policy string `toml:"policy"`
+	File     string `toml:"file"`
+	Lists    string `toml:"lists"`
+	Policy   string `toml:"policy"`
+	Severity string `toml:"severity"`
 }
 
 type Profile struct {
@@ -129,6 +134,54 @@ func load(fsys fs.FS, diskPath string) (*Profile, error) {
 				return nil, fmt.Errorf("type %q: malformed scope glob %q", t.Name, g)
 			}
 		}
+	}
+	// [[indexes]] entries are validated here (SPEC §36) so every layer that
+	// consumes them — profile show, the index lint enforcement — can trust
+	// each declaration without re-checking. Fail closed: a contract that
+	// cannot mean what its author wrote never loads. Errors carry the same
+	// source context the decode errors above do.
+	src := "profile.toml"
+	if diskPath != "" {
+		src = filepath.Join(diskPath, "profile.toml")
+	}
+	seenIndex := map[string]bool{}
+	for i, ix := range p.Indexes {
+		where := fmt.Sprintf("%s: [[indexes]] entry %d", src, i+1)
+		if ix.File != "" {
+			where = fmt.Sprintf("%s: [[indexes]] %q", src, ix.File)
+		}
+		if ix.File == "" {
+			return nil, fmt.Errorf("%s: file is required", where)
+		}
+		// The enforcement layer (§37) looks notes up by exact vault-relative
+		// key, so a file that is absolute, escapes the vault, or is not its
+		// own path.Clean could never designate a note — a contract that can
+		// never be checked must not load.
+		if path.IsAbs(ix.File) || ix.File != path.Clean(ix.File) || hasDotDotElement(ix.File) {
+			return nil, fmt.Errorf(`%s: file must be a clean vault-relative path (no leading "/" or "./", no "..", no trailing "/")`, where)
+		}
+		if ix.Lists == "" {
+			return nil, fmt.Errorf("%s: lists is required", where)
+		}
+		if !doublestar.ValidatePattern(ix.Lists) {
+			return nil, fmt.Errorf("%s: malformed lists glob %q", where, ix.Lists)
+		}
+		switch ix.Policy {
+		case "must-link-all", "must-link-all-and-resolve":
+		default:
+			return nil, fmt.Errorf(`%s: unknown policy %q (want "must-link-all" or "must-link-all-and-resolve")`, where, ix.Policy)
+		}
+		// The severity literals are duplicated from the lint package on
+		// purpose: profile cannot import lint without a cycle.
+		switch ix.Severity {
+		case "error", "warning":
+		default:
+			return nil, fmt.Errorf(`%s: each [[indexes]] entry requires severity "error" or "warning" (got %q; see docs/SPEC.md)`, where, ix.Severity)
+		}
+		if seenIndex[ix.File] {
+			return nil, fmt.Errorf("%s: duplicate [[indexes]] entry for this file", where)
+		}
+		seenIndex[ix.File] = true
 	}
 	if err := p.compileSchemas(); err != nil {
 		return nil, err
@@ -212,6 +265,18 @@ func (p *Profile) TypeOf(relPath string, fields map[string]any) string {
 		return t.Name
 	}
 	return ""
+}
+
+// hasDotDotElement reports whether any slash-separated element is "..".
+// path.Clean keeps a leading "../" run, so equality with Clean alone does
+// not catch vault escapes.
+func hasDotDotElement(p string) bool {
+	for _, el := range strings.Split(p, "/") {
+		if el == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 // matchAny reports whether relPath matches any scope glob. Callers must

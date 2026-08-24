@@ -82,9 +82,10 @@ type ingestView struct {
 }
 
 type indexView struct {
-	File   string `json:"file"`
-	Lists  string `json:"lists"`
-	Policy string `json:"policy"`
+	File     string `json:"file"`
+	Lists    string `json:"lists"`
+	Policy   string `json:"policy"`
+	Severity string `json:"severity"`
 }
 
 type typeView struct {
@@ -161,7 +162,9 @@ func buildProfileView(p *profile.Profile) (*profileView, error) {
 		Lint:          nonNilLint(p.Lint),
 	}
 	for _, ix := range p.Indexes {
-		view.Indexes = append(view.Indexes, indexView{File: ix.File, Lists: ix.Lists, Policy: ix.Policy})
+		view.Indexes = append(view.Indexes, indexView{
+			File: ix.File, Lists: ix.Lists, Policy: ix.Policy, Severity: ix.Severity,
+		})
 	}
 	for _, t := range p.Types {
 		schemaBytes, err := p.SchemaBytes(t.Name)
@@ -227,7 +230,7 @@ func renderProfileView(cmd *cobra.Command, prof *profile.Profile, jsonOut bool) 
 	if len(view.Indexes) > 0 {
 		fmt.Fprintf(out, "\nindexes:\n")
 		for _, ix := range view.Indexes {
-			fmt.Fprintf(out, "  %s lists %s (%s)\n", ix.File, ix.Lists, ix.Policy)
+			fmt.Fprintf(out, "  %s lists %s (%s, %s)\n", ix.File, ix.Lists, ix.Policy, ix.Severity)
 		}
 	}
 	return nil
