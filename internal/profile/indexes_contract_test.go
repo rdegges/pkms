@@ -82,6 +82,19 @@ func TestDuplicateIndexFilesAreDetectedByExactStringOnly(t *testing.T) {
 	require.ErrorContains(t, err, "duplicate")
 }
 
+// An entry with no `file` is located by POSITION — the by-file locator has
+// nothing to name. Pins the positional half of the error contract
+// (TestIndexEntryErrorsNameTheEntry covers the by-file half).
+func TestIndexEntryWithoutFileIsNamedByPosition(t *testing.T) {
+	_, err := loadManifest(t, indexManifest([]Index{
+		{File: "Projects.md", Lists: "Projects/**", Policy: "must-link-all", Severity: "warning"},
+		{File: "index.md", Lists: "Resources/**", Policy: "must-link-all", Severity: "warning"},
+		{Lists: "Recipes/*.md", Policy: "must-link-all", Severity: "error"},
+	}))
+	require.ErrorContains(t, err, "entry 3", "the third entry is entry 3, not entry 2")
+	require.ErrorContains(t, err, "file is required")
+}
+
 // `lists` reuses the §30 construction gate (ValidatePattern), which accepts
 // patterns doublestar.Match then refuses at match time. That divergence is
 // exactly the #30 defect, one field over. Pinned so the requirement it

@@ -390,7 +390,7 @@ Conventions:
 
 ---
 
-## Group D — Index / count drift (9 rules)
+## Group D — Index / count drift (11 rules)
 
 Index contracts are parametrized by the profile's `[[indexes]]`
 declarations (validated at load, SPEC §36; enforced by `index-complete`,
@@ -629,6 +629,11 @@ instantiate). Findings carry the engine rule ID; semantics are unchanged:
   | `resources-cataloged-in-index` | `index-complete` | `index.md` |
   | `projects-linked-from-master`  | `index-complete` | `Projects.md` |
   | `recipes-index-links-complete` | `index-complete` | `Resources/Personal/Recipes/Recipes.md` (policy `must-link-all-and-resolve`) |
+
+  Migrating a config means DELETING the retired `[lint.*]` table outright —
+  renaming it to `[lint.index-complete]` while keeping its `file`/`lists`
+  keys is accepted and silently configures nothing, because the rule reads
+  no keys from its table (the contracts live in `[[indexes]]`).
 
 - All other catalog rules keep their IDs 1:1.
 
