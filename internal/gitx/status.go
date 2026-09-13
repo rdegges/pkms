@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Status is local recovery evidence, not a record of snapshot execution.
@@ -15,7 +16,7 @@ type Status struct {
 	Detail              string
 	Commit              string
 	CommitAt            string
-	Dirty               bool
+	Dirty               *bool
 	OperationInProgress bool
 }
 
@@ -52,22 +53,33 @@ func (g Git) ReadStatus() (Status, error) {
 		s.Detail = "vault is not the repository root; local recovery history is unavailable"
 		return s, nil
 	}
-	head, err := g.statusRead("rev-parse", "--verify", "--quiet", "HEAD")
+	promisor, err := g.hasStatusConfig(`^(extensions\.partialclone|remote\..*\.promisor)$`)
 	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() == 1 {
-			s.Detail = "repository has no commits; create a local recovery point"
-			return s, nil
+		return s, err
+	}
+	if promisor {
+		s.Detail = "partial-clone/promisor repository: local recovery state was not inspected"
+		return s, nil
+	}
+	head, err := g.statusRead("rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	if err != nil {
+		// A missing symbolic branch is an unborn repository. A broken ref,
+		// missing object, detached invalid HEAD, or non-commit is corruption.
+		if ref, refErr := g.statusRead("symbolic-ref", "--quiet", "HEAD"); refErr == nil {
+			_, refErr = g.statusRead("show-ref", "--verify", "--quiet", "--", ref)
+			if statusExit(refErr, 1) {
+				s.Detail = "repository has no commits; create a local recovery point"
+				return s, nil
+			}
 		}
 		return s, err
 	}
-	date, err := g.statusRead("show", "-s", "--format=%cI", head)
+	date, err := g.statusRead("show", "--no-show-signature", "-s", "--format=%cI", head)
 	if err != nil {
 		return s, err
 	}
-	worktree, err := g.statusRead("status", "--porcelain", "--untracked-files=normal")
-	if err != nil {
-		return s, err
+	if _, err := time.Parse(time.RFC3339, date); err != nil {
+		return s, fmt.Errorf("git HEAD commit has an invalid committer timestamp")
 	}
 	gitDir, err := g.statusRead("rev-parse", "--absolute-git-dir")
 	if err != nil {
@@ -80,13 +92,53 @@ func (g Git) ReadStatus() (Status, error) {
 			return s, err
 		}
 	}
-	s.Available, s.Commit, s.CommitAt, s.Dirty = true, head, date, worktree != ""
+	filters, err := g.hasStatusConfig(`^filter\..*\.(clean|process)$`)
+	if err != nil {
+		return s, err
+	}
+	if filters {
+		s.Detail = "working-tree changes are unknown: Git clean/process filters are configured"
+	} else {
+		index, err := g.statusRead("ls-files", "--stage", "-z")
+		if err != nil {
+			return s, err
+		}
+		for _, entry := range strings.Split(index, "\x00") {
+			if strings.HasPrefix(entry, "160000 ") {
+				s.Detail = "working-tree changes are unknown: repository contains submodules"
+				break
+			}
+		}
+		if s.Detail == "" {
+			worktree, err := g.statusRead("status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all")
+			if err != nil {
+				return s, err
+			}
+			dirty := worktree != ""
+			s.Dirty = &dirty
+		}
+	}
+	s.Available, s.Commit, s.CommitAt = true, head, date
 	return s, nil
 }
 
+func statusExit(err error, code int) bool {
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && exit.ExitCode() == code
+}
+
+// Read names only: configured filter commands and remote URLs stay private.
+func (g Git) hasStatusConfig(pattern string) (bool, error) {
+	names, err := g.statusRead("config", "--name-only", "--get-regexp", pattern)
+	if statusExit(err, 1) {
+		return false, nil
+	}
+	return names != "", err
+}
+
 func (g Git) statusRead(args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"--no-optional-locks", "-c", "core.fsmonitor=false", "-C", g.Dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd := exec.Command("git", append([]string{"--no-pager", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "log.showSignature=false", "-C", g.Dir}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "GIT_ALLOW_PROTOCOL=")
 	out, err := cmd.Output()
 	if err != nil {
 		// Do not expose arbitrary repository configuration or command stderr.

@@ -15,6 +15,7 @@ import (
 
 	"github.com/rdegges/pkms/internal/config"
 	"github.com/rdegges/pkms/internal/gitx"
+	"github.com/rdegges/pkms/internal/ingest"
 	"github.com/rdegges/pkms/internal/lint"
 	"github.com/rdegges/pkms/internal/paths"
 	"github.com/rdegges/pkms/internal/profile"
@@ -82,7 +83,9 @@ func newStatusCmd() *cobra.Command {
 					return err
 				}
 			} else {
-				writeStatus(cmd.OutOrStdout(), r)
+				if err := writeStatus(cmd.OutOrStdout(), r); err != nil {
+					return err
+				}
 			}
 			return inspectionErr
 		},
@@ -97,6 +100,13 @@ func collectStatus(v *config.Vault) (vaultStatus, error) {
 	r.Snapshot.Detail = "snapshot run time is unknown: clean successful runs leave no commit"
 	check := func(name, status, detail string) {
 		r.Checks = append(r.Checks, checkResult{Name: name, Status: status, Detail: detail})
+	}
+	for _, source := range v.Sources {
+		if source.Enabled {
+			if _, err := ingest.Lookup(source.Type); err != nil {
+				check("ingest-config", "fail", err.Error())
+			}
+		}
 	}
 	prof, err := profile.Load(v.Profile)
 	if err != nil {
@@ -124,7 +134,10 @@ func collectStatus(v *config.Vault) (vaultStatus, error) {
 	default:
 		r.Snapshot.Status = "ok"
 		r.Snapshot.LatestCommit, r.Snapshot.LatestCommitAt = &s.Commit, &s.CommitAt
-		r.Snapshot.Dirty, r.Snapshot.OperationInProgress = &s.Dirty, &s.OperationInProgress
+		r.Snapshot.Dirty, r.Snapshot.OperationInProgress = s.Dirty, &s.OperationInProgress
+		if s.Detail != "" {
+			r.Snapshot.Detail = s.Detail + "; " + r.Snapshot.Detail
+		}
 		if s.OperationInProgress {
 			check("snapshot", "warn", "git operation in progress; snapshots skip until it is resolved")
 		}
@@ -187,6 +200,12 @@ func inspectInbox(root string, p *profile.Profile) inboxStatus {
 		r.Status, r.Detail = "error", "vault path is not a directory"
 		return r
 	}
+	for _, folder := range r.Folders {
+		if _, err := statusDirectory(root, folder); err != nil {
+			r.Status, r.Detail = "error", err.Error()
+			return r
+		}
+	}
 	ix, err := vault.BuildIndex(root, vault.WalkOptions{AttachmentsDir: p.Attachments})
 	if err != nil {
 		r.Status, r.Detail = "error", err.Error()
@@ -238,17 +257,18 @@ func inspectQuarantine(dir string) quarantineStatus {
 	r := quarantineStatus{Status: "error"}
 	count := 0
 	unsupported := false
-	st, err := os.Lstat(dir)
-	if os.IsNotExist(err) {
-		r.Status, r.Files = "ok", &count
-		return r
-	}
+	rel, err := filepath.Rel(paths.StateDir(), dir)
 	if err != nil {
 		r.Detail = err.Error()
 		return r
 	}
-	if !st.IsDir() {
-		r.Detail = "quarantine path is not a directory"
+	exists, err := statusDirectory(paths.StateDir(), rel)
+	if err != nil {
+		r.Detail = err.Error()
+		return r
+	}
+	if !exists {
+		r.Status, r.Files = "ok", &count
 		return r
 	}
 	err = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
@@ -274,32 +294,68 @@ func inspectQuarantine(dir string) quarantineStatus {
 	return r
 }
 
-func writeStatus(out io.Writer, r vaultStatus) {
-	fmt.Fprintf(out, "%s (%q)\n", r.Vault, r.Profile)
-	if r.Inbox.Count == nil {
-		fmt.Fprintf(out, "Inbox: %s (%q)\n", r.Inbox.Status, r.Inbox.Detail)
-	} else {
-		fmt.Fprintf(out, "Inbox: %d notes", *r.Inbox.Count)
-		if r.Inbox.OldestCreatedAt != nil {
-			fmt.Fprintf(out, "; oldest source-note date %s", *r.Inbox.OldestCreatedAt)
+// Check each existing component before descending. A dangling ancestor symlink
+// must not become an apparently absent (and therefore empty) directory.
+func statusDirectory(root, rel string) (bool, error) {
+	p := root
+	parts := append([]string{"."}, strings.Split(filepath.ToSlash(rel), "/")...)
+	for _, part := range parts {
+		p = filepath.Join(p, part)
+		st, err := os.Lstat(p)
+		if os.IsNotExist(err) {
+			return false, nil
 		}
-		fmt.Fprintf(out, "; %d undated\n", *r.Inbox.UndatedCount)
+		if err != nil {
+			return false, err
+		}
+		if !st.IsDir() {
+			return false, fmt.Errorf("%s is not a directory; symlinks are not followed", p)
+		}
 	}
-	fmt.Fprintf(out, "Last successful ingest: %s\n", r.Ingest.Detail)
+	return true, nil
+}
+
+func writeStatus(destination io.Writer, r vaultStatus) error {
+	// Build the small report before one checked write, so every output failure
+	// reaches Cobra instead of being hidden by a sequence of ignored writes.
+	var out strings.Builder
+	fmt.Fprintf(&out, "%s (%q)\n", r.Vault, r.Profile)
+	if r.Inbox.Count == nil {
+		fmt.Fprintf(&out, "Inbox: %s (%q)\n", r.Inbox.Status, r.Inbox.Detail)
+	} else {
+		fmt.Fprintf(&out, "Inbox: %d notes", *r.Inbox.Count)
+		if r.Inbox.OldestCreatedAt != nil {
+			fmt.Fprintf(&out, "; oldest source-note date %s", *r.Inbox.OldestCreatedAt)
+		}
+		fmt.Fprintf(&out, "; %d undated\n", *r.Inbox.UndatedCount)
+	}
+	fmt.Fprintf(&out, "Last successful ingest: %s\n", r.Ingest.Detail)
 	if r.Snapshot.LatestCommit != nil {
-		fmt.Fprintf(out, "Local recovery point: %s at %s; unsnapshotted changes: %t\n", (*r.Snapshot.LatestCommit)[:12], *r.Snapshot.LatestCommitAt, *r.Snapshot.Dirty)
+		dirty := "unknown"
+		if r.Snapshot.Dirty != nil {
+			dirty = fmt.Sprint(*r.Snapshot.Dirty)
+		}
+		fmt.Fprintf(&out, "Local recovery point: %s at %s; unsnapshotted changes: %s\n", (*r.Snapshot.LatestCommit)[:12], *r.Snapshot.LatestCommitAt, dirty)
+		if r.Snapshot.Dirty == nil {
+			fmt.Fprintf(&out, "Recovery inspection: %q\n", r.Snapshot.Detail)
+		}
 	} else {
-		fmt.Fprintf(out, "Local recovery point: %s\n", r.Snapshot.Status)
+		fmt.Fprintf(&out, "Local recovery point: %s\n", r.Snapshot.Status)
 	}
-	fmt.Fprintf(out, "Snapshot run time: unknown (run outcomes are not recorded)\n")
+	fmt.Fprintf(&out, "Snapshot run time: unknown (run outcomes are not recorded)\n")
 	if r.Quarantine.Files != nil {
-		fmt.Fprintf(out, "Quarantine: %d files\n", *r.Quarantine.Files)
+		fmt.Fprintf(&out, "Quarantine: %d files\n", *r.Quarantine.Files)
 	} else {
-		fmt.Fprintf(out, "Quarantine: %s (%q)\n", r.Quarantine.Status, r.Quarantine.Detail)
+		fmt.Fprintf(&out, "Quarantine: %s (%q)\n", r.Quarantine.Status, r.Quarantine.Detail)
 	}
 	for _, c := range r.Checks {
 		if c.Status != "ok" {
-			fmt.Fprintf(out, "%s: %s: %q\n", c.Status, c.Name, c.Detail)
+			fmt.Fprintf(&out, "%s: %s: %q\n", c.Status, c.Name, c.Detail)
 		}
 	}
+	n, err := io.WriteString(destination, out.String())
+	if err == nil && n != out.Len() {
+		return io.ErrShortWrite
+	}
+	return err
 }
