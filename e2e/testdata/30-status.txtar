@@ -1,0 +1,41 @@
+# Read-only operational evidence, with no inferred successful-run timestamps.
+exec pkms init --path $WORK/vault --name vault
+exec pkms status --json
+stdout '"count": 0'
+stdout '"last_success_at": null'
+stdout '"last_run_at": null'
+stdout '"dirty": false'
+stdout '"files": 0'
+
+cp captured.md vault/_Inbox/captured.md
+exec pkms status --vault vault --json
+stdout '"count": 1'
+stdout '"oldest_created_at": "2001-02-03T00:00:00Z"'
+stdout '"dirty": true'
+cmp captured.md vault/_Inbox/captured.md
+
+mkdir home/state/pkms/failed/vault/adhoc
+cp rejected.json home/state/pkms/failed/vault/adhoc/record.json
+! exec pkms status --json
+stdout '"files": 1'
+stdout '"status": "warn"'
+cmp rejected.json home/state/pkms/failed/vault/adhoc/record.json
+
+# Text makes the unavailable freshness evidence explicit too.
+! exec pkms status
+stdout 'Last successful ingest: unknown'
+stdout 'oldest source-note date'
+stdout 'Snapshot run time: unknown'
+stdout 'Quarantine: 1 files'
+
+! exec pkms status extra
+! exec pkms status --vault does-not-exist --json
+
+-- captured.md --
+---
+created: 2001-02-03
+source: mid:status-fixture@example.test
+---
+The source date is not an ingest-run timestamp.
+-- rejected.json --
+{"record": {}, "errors": "fixture"}
