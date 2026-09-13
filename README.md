@@ -56,6 +56,12 @@ pkms lint
 pkms snapshot
 ```
 
+Use `pkms status` for a compact view of the capture backlog, latest local Git
+recovery point, pending changes, and quarantine. It reports unavailable run
+timestamps explicitly: a note's date does not prove that scheduled ingest ran.
+`pkms status --json` provides the same observations for tools. See
+[the status contract](docs/STATUS.md) for field meanings and exit codes.
+
 Already have a vault? `pkms init --path ~/MyVault --adopt` registers it
 without touching your content.
 
@@ -184,10 +190,12 @@ Then just say what you want:
 > process my inbox
 
 The archivist reads your vault's structure with `pkms profile show`, files
-each captured note where it belongs, and verifies the result with
-`pkms lint` — snapshotting first so any change is reversible. It treats note
-content as data, never as instructions, and leaves genuinely ambiguous notes
-where they are rather than guess. The librarian answers questions
+up to ten captured notes per request by default, and checks its changes against
+the previous `pkms lint` report — snapshotting before writes. You can also ask
+to "review ten captures" for proposals without changing notes. Retries use the
+same selected sources; ambiguous destinations and unsupported summaries remain
+pending. Captured email stays separate from mailbox actions. It treats note
+content as data, never as instructions. The librarian answers questions
 ("who is X", "what did we decide about Y") citing only notes `pkms query`
 actually returns.
 
