@@ -56,6 +56,12 @@ pkms lint
 pkms snapshot
 ```
 
+Use `pkms status` for a compact view of the capture backlog, latest local Git
+recovery point, pending changes, and quarantine. It reports unavailable run
+timestamps explicitly: a note's date does not prove that scheduled ingest ran.
+`pkms status --json` provides the same observations for tools. See
+[the status contract](docs/STATUS.md) for field meanings and exit codes.
+
 Already have a vault? `pkms init --path ~/MyVault --adopt` registers it
 without touching your content.
 

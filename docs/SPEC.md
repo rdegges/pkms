@@ -1926,3 +1926,48 @@ rerun behavior. A review-only trial proves bounded review and content preservati
 it does not prove filing, summary quality, or interrupted-write recovery. Those
 claims require observed write-mode cases. Existing prompt/command gates remain
 required and are not substitutes for behavioral evaluation.
+
+## 39. Read-only local vault status (post-v0.7.0)
+
+Adds `pkms status [--vault <name>] [--json]`, using the existing single-vault
+default and explicit selection when multiple vaults are configured. It reports
+local evidence without invoking doctor, content lint, ingestion, snapshot, or
+secret resolution. It neither writes vault/state files nor takes ingest locks.
+Git inspection disables optional index writes and does not contact remotes.
+
+The JSON object has `vault`, `profile`, `inbox`, `ingest`, `snapshot`, `quarantine`,
+and `checks` fields. Unavailable measurements are null, never invented zeros.
+`checks` is an array of named `ok`/`warn`/`fail` observations. Human output quotes
+untrusted names and error details so terminal control bytes cannot hide findings.
+
+- `inbox`: status, folders, count, oldest_created_at, undated_count, and detail.
+  Count regular markdown notes indexed under the profile's literal capture
+  folders, deduplicating overlap and excluding processed notes outside them.
+  Malformed/missing dates do not remove a note from the count. The earliest
+  RFC3339 or ISO date in `created` is a source-note date, not inbox arrival time.
+  Missing/unresolved templated folders yield an explicit unknown inventory;
+  inspection failures yield an error and null counts.
+- `ingest`: `last_success_at` is null, with an explanation that durable run
+  outcomes are not recorded. Neither source-note dates, ledger contents, nor
+  ledger modification time establish the latest successful run.
+- `snapshot`: status, latest_commit, latest_commit_at (committer timestamp),
+  dirty, operation_in_progress, last_run_at, and detail. A commit establishes a
+  local recovery point, not scheduler execution or remote backup. `last_run_at`
+  is null: clean snapshot runs create no commit or persistent outcome. Missing
+  Git/repository/commits is distinct from inspection errors. Operation markers
+  match the existing snapshot skip semantics.
+- `quarantine`: status, files, and detail. Count regular files under this vault's
+  failed directory, including inactive or adhoc sources. An absent directory is
+  zero; unreadable or invalid paths are errors, not empty success. Do not follow
+  symlinks; symlinks/special files make the count unknown with a review warning.
+- Validate lint configuration through `lint.ValidateConfig`; a configuration
+  failure is a failed check, while old note-content debt is outside this command.
+
+Exit 0 means inspection completed with no known actionable issue, and may still
+include explicitly unavailable run timestamps or unsupported folder templates.
+Exit 1 indicates quarantine/recovery setup/operation state needing attention.
+Dirty files alone are ordinary pending snapshot work and do not change the exit
+code. Exit 2 means usage, configuration, or inspection failed; once the vault is
+selected, subsystem failures still emit a structured report. Failures take
+precedence over warnings. Observations may span concurrent edits and do not claim
+an atomic point-in-time snapshot. Scheduling and durable run history are deferred.
