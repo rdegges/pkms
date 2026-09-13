@@ -512,3 +512,73 @@ func TestStatusPropagatesHumanOutputFailures(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusGitEnvironmentCannotHideFilters(t *testing.T) {
+	dir := statusVault(t, "para")
+	writeStatusFile(t, dir, ".gitattributes", "filtered.md filter=sentinel\n")
+	writeStatusFile(t, dir, "filtered.md", "unchanged content\n")
+	g := gitx.Git{Dir: dir}
+	require.NoError(t, g.AddAll())
+	_, err := g.Commit("seed filter input")
+	require.NoError(t, err)
+	probeDir := t.TempDir()
+	sentinel := filepath.Join(probeDir, "sentinel")
+	script := filepath.Join(probeDir, "filter.sh")
+	require.NoError(t, os.WriteFile(script, []byte(fmt.Sprintf("#!/bin/sh\n: > '%s'\ncat\n", sentinel)), 0o755))
+	statusTestGit(t, dir, "config", "--local", "filter.sentinel.clean", script)
+	old := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, os.Chtimes(filepath.Join(dir, "filtered.md"), old, old))
+	// GIT_CONFIG affects `git config`, but not `git status`: the two must
+	// not see different configuration when deciding whether filters are safe.
+	t.Setenv("GIT_CONFIG", "/dev/null")
+	r, _, err := readStatus(t)
+	_, statErr := os.Stat(sentinel)
+	require.True(t, os.IsNotExist(statErr), "hidden filter configuration caused a command to execute")
+	require.NoError(t, err)
+	require.Nil(t, r.Snapshot.Dirty)
+}
+
+func TestStatusGitEnvironmentCannotWriteTraceFiles(t *testing.T) {
+	dir := statusVault(t, "para")
+	trace := filepath.Join(dir, "status-trace.txt")
+	t.Setenv("GIT_TRACE", trace)
+	_, _, err := readStatus(t)
+	require.NoError(t, err)
+	_, err = os.Stat(trace)
+	require.True(t, os.IsNotExist(err), "status wrote an inherited Git trace destination")
+}
+
+func TestStatusGitEnvironmentCannotRedirectRepository(t *testing.T) {
+	dir := statusVault(t, "para")
+	want := statusTestGit(t, dir, "rev-parse", "HEAD")
+	other := filepath.Join(t.TempDir(), "other")
+	out, err := runCLI(t, "init", "--path", other, "--name", "other")
+	require.NoError(t, err, out)
+	writeStatusFile(t, other, "Areas/other.md", "other vault content\n")
+	g := gitx.Git{Dir: other}
+	require.NoError(t, g.AddAll())
+	otherCommit, err := g.Commit("a different vault")
+	require.NoError(t, err)
+	require.NotEqual(t, want, otherCommit)
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	r, _, err := readStatus(t, "--vault", "test")
+	require.NoError(t, err)
+	require.NotNil(t, r.Snapshot.Commit)
+	require.Equal(t, want, *r.Snapshot.Commit, "Git environment redirected the selected vault")
+}
+
+func TestStatusDisablesConfiguredGitTrace2Targets(t *testing.T) {
+	for _, target := range []string{"normalTarget", "eventTarget", "perfTarget"} {
+		t.Run(target, func(t *testing.T) {
+			dir := statusVault(t, "para")
+			gitHome := t.TempDir()
+			trace := filepath.Join(dir, "trace2-output")
+			require.NoError(t, os.WriteFile(filepath.Join(gitHome, ".gitconfig"), []byte(fmt.Sprintf("[trace2]\n%s = %q\n", target, trace)), 0o644))
+			t.Setenv("HOME", gitHome)
+			_, _, err := readStatus(t)
+			require.NoError(t, err)
+			_, err = os.Stat(trace)
+			require.True(t, os.IsNotExist(err), "status wrote the configured trace2 %s", target)
+		})
+	}
+}

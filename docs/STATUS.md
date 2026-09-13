@@ -40,6 +40,8 @@ concurrent work. It validates lint configuration and enabled source types
 without constructing ingesters or checking credentials. It does not run content
 lint. Git transport, signature helpers, pagers, filesystem monitors, and unsafe
 working-tree inspections are disabled or avoided.
+Inherited `GIT_*` environment settings are discarded for inspection, and Git
+Trace2 output targets are disabled, including targets from configuration files.
 
 Exit codes: **0** means inspection completed with no known actionable issue;
 explicitly unavailable run timestamps, unsupported folder templates, or unsafe

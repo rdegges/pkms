@@ -138,7 +138,18 @@ func (g Git) hasStatusConfig(pattern string) (bool, error) {
 
 func (g Git) statusRead(args ...string) (string, error) {
 	cmd := exec.Command("git", append([]string{"--no-pager", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "log.showSignature=false", "-C", g.Dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "GIT_ALLOW_PROTOCOL=")
+	// Inherited Git settings can redirect the repository, hide configuration
+	// from only some commands, or write trace files. All inspection commands
+	// must see the same selected repository and ordinary configuration files.
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, "GIT_") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	cmd.Env = append(cmd.Env, "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "GIT_ALLOW_PROTOCOL=",
+		// Trace2 also accepts configured output targets; explicit environment
+		// values disable those before Git startup can open an output file.
+		"GIT_TRACE2=0", "GIT_TRACE2_EVENT=0", "GIT_TRACE2_PERF=0")
 	out, err := cmd.Output()
 	if err != nil {
 		// Do not expose arbitrary repository configuration or command stderr.
