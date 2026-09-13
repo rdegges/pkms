@@ -3,14 +3,16 @@
 # work against the binary — this drives them in order against a seeded
 # fixture vault. The MOVE step is the agent's judgment (its own file tools),
 # not a pkms command, so it isn't exercised here; the live run (PR7) covers
-# that. TestCanonicalBlockCoveredBySubstrate ties this file to the skill so
-# the two can't drift.
+# that. TestCanonicalBlockCoveredBySubstrate checks top-level command-set
+# coverage; it does not verify the skill's ordering, selection, or judgment.
 
 exec pkms init --path $WORK/vault
 
 # Empty capture folder: the skill's empty-inbox branch — query returns an
 # empty result set, and there is nothing to file.
 exec pkms query --type clip --json
+stdout '"results": \[\]'
+exec pkms query --type asset --json
 stdout '"results": \[\]'
 
 # Seed the capture folder: a local markdown file ingests as a clip note.
@@ -23,10 +25,28 @@ exec pkms profile show --vault vault --json
 stdout '"clip": "clip"'
 exec pkms query --type clip --json
 stdout '"path"'
-exec pkms snapshot
-exec pkms lint --fix
+exec pkms query --type asset --json
+stdout '"results": \[\]'
+# Baseline and source lookup are available without mutating the vault.
+cp note.md $WORK/vault/Resources/pre-snapshot.md
+exec pkms lint --json
+stdout '"error": 0'
+exec pkms query --where source_url=https://example.com/not-captured --json
+stdout '"results": \[\]'
+exec pkms snapshot --json
+stdout '"status": "committed"'
+stdout '"commit": "[a-f0-9]+"'
+exec pkms query --backlinks no-such-note.md --json
+stdout '"results": \[\]'
 exec pkms lint --json
 stdout '"findings"'
+
+# Exit zero alone is not a restore-point gate: a merge makes snapshot skip.
+# Agents must inspect this result before using their own file tools.
+cp note.md $WORK/vault/.git/MERGE_HEAD
+exec pkms snapshot --json
+stdout '"status": "skipped-merge"'
+rm $WORK/vault/.git/MERGE_HEAD
 
 -- note.md --
 # A captured note

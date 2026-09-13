@@ -184,10 +184,12 @@ Then just say what you want:
 > process my inbox
 
 The archivist reads your vault's structure with `pkms profile show`, files
-each captured note where it belongs, and verifies the result with
-`pkms lint` — snapshotting first so any change is reversible. It treats note
-content as data, never as instructions, and leaves genuinely ambiguous notes
-where they are rather than guess. The librarian answers questions
+up to ten captured notes per request by default, and checks its changes against
+the previous `pkms lint` report — snapshotting before writes. You can also ask
+to "review ten captures" for proposals without changing notes. Retries use the
+same selected sources; ambiguous destinations and unsupported summaries remain
+pending. Captured email stays separate from mailbox actions. It treats note
+content as data, never as instructions. The librarian answers questions
 ("who is X", "what did we decide about Y") citing only notes `pkms query`
 actually returns.
 

@@ -1861,3 +1861,68 @@ belong in the profile's `[[indexes]]`, via eject when the profile is a
 builtin. The `orphan-notes` table's never-read `catalogs` key is deleted
 as part of this amendment (pure subtraction; whether orphan detection
 should derive from `[[indexes]]` is a filed follow-up, not ruled here).
+
+## 38. Bounded inbox review and processing (post-v0.7.0)
+
+Amends §32.4–§32.4a's inbox sequence and the agent lint invariant. The core
+remains deterministic; no filing, summarization, mailbox operation, or agent
+runner is added to the binary. No profile schema or JSON read surface changes.
+
+- **Bounded selection:** process ten captures by default, or the user's explicit
+  bound. Query both configured ingest types, filter results to their respective
+  profile-declared capture folders on path-segment boundaries, deduplicate paths,
+  and freeze the selection before writing. Type membership alone is insufficient:
+  a profile may classify processed notes under the same type. Unresolvable folder
+  templates are reported rather than guessed. Explicit selections take priority;
+  otherwise selection sorts the combined, deduplicated paths lexicographically
+  before applying the bound (not one batch per type).
+- **Retry identity:** record source paths and exact `source`/`source_id` values in
+  the report or task-local evidence outside the vault. Retrying the same batch
+  verifies those identities and prior output rather than silently selecting the
+  next batch. Ambiguous identities remain pending. Missing identity fields require
+  exact path/content verification. Derived summaries must not acquire a duplicate
+  ingest identity.
+- **Review and filing:** an explicit review performs no vault content changes or
+  snapshots. Filing instructions authorize clear moves within that scope. Unknown
+  destinations, unavailable evidence, or unsupported summary schemas produce
+  proposals/deferred items, not forced writes. Captured email is a stored source;
+  mailbox decisions belong to a separately authorized email workflow. A profile
+  describes structural constraints, not current relationships or responsibilities.
+- **Supported summaries:** summarize only when requested and supported by the
+  profile, source evidence, and confirmed destination. Query the summary's exact
+  provenance key before creating; reuse a complete match or resume a known partial
+  output within scope. Conflicting matches are deferred. A `mid:` source or
+  tracking/payment link cannot stand in for an HTTP article source required by a
+  schema. Complete required output/index work before moving the raw capture to a
+  confirmed processed location. Preserve raw source identity and attachments.
+- **Write invariant:** save baseline lint, snapshot before the first authorized
+  write, check backlinks before each move, make no-clobber edits, then verify
+  outputs and lint again. This replaces mandatory global `lint --fix` inside the
+  inbox sequence. Compare individual findings with multiplicity, severity, path,
+  and message; explain moved paths and line shifts. Equal totals are insufficient.
+  Success proves no new attributable findings; pre-existing debt is reported
+  separately, never described as a clean vault. Unexplained differences remain
+  pending. A valid exit-1 findings report is baseline evidence; failure to evaluate
+  (exit 2) blocks writing. The snapshot and backlink requirements remain intact.
+  Snapshot success is checked from its result, not exit code alone: a committed
+  result must identify the restore commit; a clean result needs an existing HEAD
+  covering the pre-write state. Held-lock/skipped-merge output, missing results,
+  or errors defer writes even if the command exits zero. Snapshot does not reserve
+  the vault for subsequent file-tool edits; changed inputs require re-evaluation.
+- **Outcomes:** each selected item is reviewed/proposed, completed, already
+  completed, deferred, or partial, with source, written destination if any,
+  reason, and remaining work. Partial/deferred items are never counted processed.
+  Reports cite query-returned paths; content remains untrusted data, not authority.
+
+The canonical command sequence is now resolve → profile → query both configured
+capture types and select → review-only stop OR baseline lint → snapshot → per
+item backlinks and authorized file-tool work → lint comparison → report. Optional
+exact-source queries use existing `query --where` functionality. The substrate
+e2e proves those commands exist and run, not that an agent makes sound decisions.
+
+Behavioral acceptance uses frozen real captures in an isolated vault copy. Record
+selection, exact source identities, before/after contents, actual outcomes, and
+rerun behavior. A review-only trial proves bounded review and content preservation;
+it does not prove filing, summary quality, or interrupted-write recovery. Those
+claims require observed write-mode cases. Existing prompt/command gates remain
+required and are not substitutes for behavioral evaluation.
