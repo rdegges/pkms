@@ -40,6 +40,7 @@ type statusPayload struct {
 		Dirty      *bool   `json:"dirty"`
 		InProgress *bool   `json:"operation_in_progress"`
 		LastRun    *string `json:"last_run_at"`
+		Detail     string  `json:"detail"`
 	} `json:"snapshot"`
 	Quarantine struct {
 		Status string `json:"status"`
@@ -59,10 +60,31 @@ func readStatus(t *testing.T, args ...string) (statusPayload, string, error) {
 func statusVault(t *testing.T, prof string) string {
 	t.Helper()
 	testEnv(t)
+	isolateStatusGit(t)
 	dir := filepath.Join(t.TempDir(), "vault")
 	out, err := runCLI(t, "init", "--path", dir, "--name", "test", "--profile", prof)
 	require.NoError(t, err, out)
 	return dir
+}
+
+// Exercise real Git with isolated global and system configuration. Status
+// deliberately discards inherited GIT_* settings, so setting only
+// GIT_CONFIG_SYSTEM in the test process cannot isolate it from runner-wide
+// filters. This trusted test executable applies NOSYSTEM after that boundary.
+// It preserves every other variable, including the explicit environment and
+// Trace2 regression probes, and still reads the test's local/global config.
+func isolateStatusGit(t *testing.T) {
+	t.Helper()
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	realGit, err = filepath.Abs(realGit)
+	require.NoError(t, err)
+	t.Setenv("HOME", t.TempDir())
+	bin := t.TempDir()
+	quotedGit := "'" + strings.ReplaceAll(realGit, "'", "'\\''") + "'"
+	script := "#!/bin/sh\nexport GIT_CONFIG_NOSYSTEM=1\nexec " + quotedGit + " \"$@\"\n"
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 func writeStatusFile(t *testing.T, root, rel, body string) {
@@ -97,6 +119,7 @@ func TestStatusCountsCaptureFoldersAndSourceDates(t *testing.T) {
 			require.Equal(t, "2001-02-03T12:05:06Z", *r.Inbox.Oldest)
 			require.Nil(t, r.Ingest.LastSuccess)
 			require.Nil(t, r.Snapshot.LastRun)
+			require.NotNil(t, r.Snapshot.Dirty, "snapshot inspection: %+v", r.Snapshot)
 			require.True(t, *r.Snapshot.Dirty)
 		})
 	}
@@ -119,6 +142,7 @@ func TestStatusEmptyAndFreshnessRemainUnknown(t *testing.T) {
 		require.Contains(t, out, `"last_success_at": null`)
 		require.NotNil(t, r.Snapshot.Commit)
 		require.NotNil(t, r.Snapshot.CommitAt)
+		require.NotNil(t, r.Snapshot.Dirty, "snapshot inspection: %+v", r.Snapshot)
 		require.False(t, *r.Snapshot.Dirty)
 	}
 	_, err := os.Stat(filepath.Join(dir, ".git"))
@@ -222,6 +246,7 @@ func TestStatusMergeAndMissingRecoveryPoint(t *testing.T) {
 	writeStatusFile(t, dir, ".git/MERGE_HEAD", strings.Repeat("0", 40)+"\n")
 	r, _, err := readStatus(t)
 	require.ErrorIs(t, err, errFindings)
+	require.NotNil(t, r.Snapshot.InProgress, "snapshot inspection: %+v", r.Snapshot)
 	require.True(t, *r.Snapshot.InProgress)
 	require.NoError(t, os.RemoveAll(filepath.Join(dir, ".git")))
 	r, _, err = readStatus(t)
@@ -361,10 +386,20 @@ func TestStatusDoesNotExecuteGitFilters(t *testing.T) {
 	}
 }
 
+func TestStatusStillInspectsIsolatedGlobalFilterConfiguration(t *testing.T) {
+	dir := statusVault(t, "para")
+	statusTestGit(t, dir, "config", "--global", "filter.global-fixture.clean", "cat")
+	r, _, err := readStatus(t)
+	require.NoError(t, err)
+	require.Nil(t, r.Snapshot.Dirty)
+	require.Contains(t, r.Snapshot.Detail, "filters")
+}
+
 func TestStatusDoesNotFetchPromisorObjects(t *testing.T) {
 	dir := statusVault(t, "para")
 	r, _, err := readStatus(t)
 	require.NoError(t, err)
+	require.NotNil(t, r.Snapshot.Commit, "snapshot inspection: %+v", r.Snapshot)
 	probeDir := t.TempDir()
 	sentinel := filepath.Join(probeDir, "sentinel")
 	helper := filepath.Join(probeDir, "git-remote-statusprobe")
@@ -398,6 +433,7 @@ func TestStatusDoesNotExecuteSignatureHelpers(t *testing.T) {
 	statusTestGit(t, dir, "config", "--local", "gpg.program", helper)
 	r, _, err := readStatus(t)
 	require.NoError(t, err)
+	require.NotNil(t, r.Snapshot.Commit, "snapshot inspection: %+v", r.Snapshot)
 	require.Equal(t, sha, *r.Snapshot.Commit)
 	_, err = os.Stat(sentinel)
 	require.True(t, os.IsNotExist(err), "status executed a signature helper")
