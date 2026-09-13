@@ -2,7 +2,7 @@
 name: cli
 description: >-
   How to drive a pkms vault safely from the command line — the JSON
-  contracts of lint/query/ingest/profile, how to resolve which vault a
+  contracts of status/lint/query/ingest/profile, how to resolve which vault a
   command targets, and the safety protocol every write must follow. Load
   this before running any pkms command against a real vault.
 allowed-tools: Bash, Read
@@ -46,6 +46,14 @@ notes use; each type's `folder` field is where that type lives; `types` is
 in classification order. Read placement from here — it differs per profile.
 
 ## The read surfaces
+
+`pkms status --json` reports the capture backlog, local Git recovery point,
+pending changes, quarantine, and inspection checks without changing the vault
+or probing services and secrets. Null measurements mean unavailable evidence,
+not zero. Ingest and snapshot run times are currently unknown; a source-note
+date or Git commit does not prove a scheduled run succeeded. Exit 1 calls for
+attention; exit 2 means inspection, configuration, or output failed. This is a
+local overview, not a substitute for the write protocol below.
 
 `pkms query` retrieves notes deterministically. Cite only paths it returns.
 
