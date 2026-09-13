@@ -1933,7 +1933,8 @@ Adds `pkms status [--vault <name>] [--json]`, using the existing single-vault
 default and explicit selection when multiple vaults are configured. It reports
 local evidence without invoking doctor, content lint, ingestion, snapshot, or
 secret resolution. It neither writes vault/state files nor takes ingest locks.
-Git inspection disables optional index writes and does not contact remotes.
+Git inspection disables optional index writes and does not contact remotes or
+invoke filesystem monitors, pagers, signature helpers, or clean/process filters.
 
 The JSON object has `vault`, `profile`, `inbox`, `ingest`, `snapshot`, `quarantine`,
 and `checks` fields. Unavailable measurements are null, never invented zeros.
@@ -1945,8 +1946,10 @@ untrusted names and error details so terminal control bytes cannot hide findings
   folders, deduplicating overlap and excluding processed notes outside them.
   Malformed/missing dates do not remove a note from the count. The earliest
   RFC3339 or ISO date in `created` is a source-note date, not inbox arrival time.
-  Missing/unresolved templated folders yield an explicit unknown inventory;
-  inspection failures yield an error and null counts.
+  Missing/unresolved templated folder declarations yield an explicit unknown
+  inventory. An absent directory is empty; existing capture directory components
+  must be real directories, not files or symlinks. Inspection failures yield an
+  error and null counts.
 - `ingest`: `last_success_at` is null, with an explanation that durable run
   outcomes are not recorded. Neither source-note dates, ledger contents, nor
   ledger modification time establish the latest successful run.
@@ -1955,19 +1958,27 @@ untrusted names and error details so terminal control bytes cannot hide findings
   local recovery point, not scheduler execution or remote backup. `last_run_at`
   is null: clean snapshot runs create no commit or persistent outcome. Missing
   Git/repository/commits is distinct from inspection errors. Operation markers
-  match the existing snapshot skip semantics.
+  match the existing snapshot skip semantics. HEAD must resolve to a commit with
+  a valid timestamp; corrupt references or missing objects fail inspection.
+  Clean/process filters or submodules make `dirty` null with an explanation;
+  partial-clone/promisor repositories make recovery inspection unavailable.
 - `quarantine`: status, files, and detail. Count regular files under this vault's
   failed directory, including inactive or adhoc sources. An absent directory is
   zero; unreadable or invalid paths are errors, not empty success. Do not follow
   symlinks; symlinks/special files make the count unknown with a review warning.
+  Existing ancestors within the pkms state directory must be real directories;
+  invalid ancestors fail inspection rather than reporting an empty quarantine.
 - Validate lint configuration through `lint.ValidateConfig`; a configuration
   failure is a failed check, while old note-content debt is outside this command.
+  Validate enabled source types through `ingest.Lookup` without constructing
+  ingesters or resolving credentials.
 
 Exit 0 means inspection completed with no known actionable issue, and may still
-include explicitly unavailable run timestamps or unsupported folder templates.
-Exit 1 indicates quarantine/recovery setup/operation state needing attention.
+include explicitly unavailable run timestamps, unsupported folder templates,
+or an unsafe working-tree inspection. Exit 1 indicates quarantine/recovery
+setup/operation state needing attention, including partial-clone repositories.
 Dirty files alone are ordinary pending snapshot work and do not change the exit
-code. Exit 2 means usage, configuration, or inspection failed; once the vault is
+code. Exit 2 means usage, configuration, inspection, or output failed; once the vault is
 selected, subsystem failures still emit a structured report. Failures take
 precedence over warnings. Observations may span concurrent edits and do not claim
 an atomic point-in-time snapshot. Scheduling and durable run history are deferred.
