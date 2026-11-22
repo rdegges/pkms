@@ -1,5 +1,6 @@
 # All Go commands run inside Docker so the host stays clean.
-GO_IMAGE   := golang:1.26.6-trixie
+# Tag kept for readability; the digest is what is pulled.
+GO_IMAGE   := golang:1.27.4-trixie@sha256:f18c3d73a184fb0582828510722e723b63a93f7188d11dd223d9be6f6880e65d
 DOCKER_RUN := docker run --rm \
 	-v $(CURDIR):/src -w /src \
 	-v pkms-gomod:/go/pkg/mod \
@@ -32,7 +33,7 @@ vet:
 
 # vet + formatting + golangci-lint (same version/flags as CI), so `make
 # lint` locally catches everything the pull-request gate does.
-GOLANGCI_IMAGE := golangci/golangci-lint:v2.12.2
+GOLANGCI_IMAGE := golangci/golangci-lint:v2.15.0@sha256:fbfcfd12a6f8d7f1b97b3362ca80fc2a244d46863148c73cb88e7793af96c481
 
 lint: vet
 	$(DOCKER_RUN) sh -c 'test -z "$$(gofmt -l ./cmd ./internal)" || (gofmt -l ./cmd ./internal && exit 1)'
