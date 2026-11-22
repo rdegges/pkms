@@ -17,6 +17,8 @@ import (
 	"github.com/klippa-app/go-pdfium/requests"
 	"github.com/klippa-app/go-pdfium/webassembly"
 	"github.com/tetratelabs/wazero"
+	"github.com/tetratelabs/wazero/api"
+	"github.com/tetratelabs/wazero/experimental"
 
 	"github.com/rdegges/pkms/internal/paths"
 )
@@ -185,7 +187,12 @@ func extractPDFInProcess(path string) (text string, err error) {
 func initPDFiumPool() (pdfium.Pool, error) {
 	cfg := webassembly.Config{MinIdle: 1, MaxIdle: 1, MaxTotal: 1}
 	if cache, err := wazero.NewCompilationCacheWithDir(paths.CacheDir("wazero")); err == nil {
-		cfg.RuntimeConfig = wazero.NewRuntimeConfig().WithCompilationCache(cache)
+		// go-pdfium >= 1.20 ships a pdfium.wasm that needs the wasm
+		// exception-handling feature; a custom RuntimeConfig must opt in
+		// itself, or Init fails and every child silently recompiles.
+		cfg.RuntimeConfig = wazero.NewRuntimeConfig().
+			WithCoreFeatures(api.CoreFeaturesV2 | experimental.CoreFeaturesExceptionHandling).
+			WithCompilationCache(cache)
 		if pool, err := webassembly.Init(cfg); err == nil {
 			return pool, nil
 		}

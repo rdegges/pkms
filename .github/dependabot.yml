@@ -1,0 +1,29 @@
+version: 2
+
+# Weekly, grouped minor/patch updates with a 7-day cooldown so brand-new
+# releases are not adopted before the ecosystem has had time to flag a bad
+# one. Major versions arrive as individual PRs. Nothing here auto-merges.
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      go-minor-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions-minor-patch:
+        update-types:
+          - minor
+          - patch

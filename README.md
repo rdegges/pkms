@@ -33,7 +33,8 @@ brew install rdegges/tap/pkms
 ```
 
 Or grab an archive from [Releases](https://github.com/rdegges/pkms/releases)
-(macOS/Linux, arm64/amd64), or build from source (Go 1.26+):
+(macOS/Linux, arm64/amd64), or build from source (Go 1.26+; `go.mod`'s `toolchain` line selects the
+patched Go 1.27.4 automatically):
 `go install github.com/rdegges/pkms/cmd/pkms@latest`
 
 Snapshots need `git` (≥ 2.30) on your PATH. Everything else works without it.
