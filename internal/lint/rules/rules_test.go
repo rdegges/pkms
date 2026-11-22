@@ -322,14 +322,14 @@ x
 
 func TestNamingAndPlacementRules(t *testing.T) {
 	fs := run(t, map[string]string{
-		"Rogue Root.md":                                "x\n",
-		"now.md":                                       "x\n",
-		"Extra/whatever.md":                            "x\n",
-		"Projects/loose-note.md":                       "x\n",
-		"Projects/Wrong/n.md":                          "x\n",
-		"Meetings/Snyk/2026/5/6/1100 - Bad.md":         "x\n",
-		"Meetings/Snyk/2026/05/07/Untitled Meeting.md": "x\n",
-		"Resources/Clips/Inbox/random-clip.md":         "x\n",
+		"Rogue Root.md":                                                "x\n",
+		"now.md":                                                       "x\n",
+		"Extra/whatever.md":                                            "x\n",
+		"Projects/loose-note.md":                                       "x\n",
+		"Projects/Wrong/n.md":                                          "x\n",
+		"Meetings/Snyk/2026/5/6/1100 - Bad.md":                         "x\n",
+		"Meetings/Snyk/2026/05/07/Untitled Meeting.md":                 "x\n",
+		"Resources/Clips/Inbox/random-clip.md":                         "x\n",
 		"Resources/Personal/Session Traces/2026-07-10 - hyphen.md":     "x\n",
 		"Projects/Snyk/Slack Sync 2026-05-17.md":                       "x\n",
 		"People/Snyk/backup.md.bak":                                    "x\n",
