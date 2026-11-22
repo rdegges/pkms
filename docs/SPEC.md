@@ -424,27 +424,27 @@ frozen spec. Summary of the load-bearing decisions:
   resources, broken attendee links, root junk, 74-line Now.md) are the
   expected first-run acceptance output — reported, never auto-fixed.
 
-## 13. Dependencies (pinned 2026-08-03)
+## 13. Dependencies (pinned 2026-08-03; versions refreshed 2026-11-22)
 
 Verified against proxy.golang.org / pkg.go.dev / upstream tags (full API notes:
 scratchpad `deps-report.md`, folded into implementation).
 
 | Module | Version | Role |
 | --- | --- | --- |
-| github.com/yuin/goldmark | v1.8.5 | markdown AST |
+| github.com/yuin/goldmark | v1.8.7 | markdown AST |
 | go.abhg.dev/goldmark/wikilink | v0.6.0 | `[[wikilink]]` parsing |
 | github.com/goccy/go-yaml | v1.19.2 | frontmatter YAML (ordered maps, comment round-trip) |
-| github.com/santhosh-tekuri/jsonschema/v6 | v6.0.2 | note-type schemas |
-| github.com/knadh/koanf/v2 | v2.3.5 | config core |
+| github.com/santhosh-tekuri/jsonschema/v6 | v6.0.3 | note-type schemas |
+| github.com/knadh/koanf/v2 | v2.4.1 | config core |
 | github.com/knadh/koanf/providers/file | v1.2.1 | config file provider |
-| github.com/knadh/koanf/parsers/toml/v2 | v2.2.1 | TOML parser |
+| github.com/knadh/koanf/parsers/toml/v2 | v2.2.2 | TOML parser |
 | github.com/bmatcuk/doublestar/v4 | v4.10.0 | scope/glob matching |
-| golang.org/x/text | v0.40.0 | Unicode NFC normalization (§5) |
-| github.com/pelletier/go-toml/v2 | v2.3.1 | profile manifest decode (also koanf's TOML backend) |
+| golang.org/x/text | v0.44.0 | Unicode NFC normalization (§5) |
+| github.com/pelletier/go-toml/v2 | v2.4.3 | profile manifest decode (also koanf's TOML backend) |
 | github.com/zalando/go-keyring | v0.2.8 | secrets (phase 2; pinned now) |
 | github.com/spf13/cobra | v1.10.2 | CLI |
-| github.com/stretchr/testify | v1.11.1 | tests only |
-| Go toolchain | 1.26.6 | Docker `golang:1.26.6-trixie`; CI `1.26.6` |
+| github.com/stretchr/testify | v1.12.1 | tests only |
+| Go toolchain | 1.27.4 | `go.mod` `toolchain` line (CI reads it via `go-version-file`); Docker `golang:1.27.4-trixie` |
 
 Decisions (with rationale):
 
